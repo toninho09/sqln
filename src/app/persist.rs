@@ -9,6 +9,7 @@ use super::history::HistoryLog;
 use super::{App, DialogAction, Options};
 use crate::arrange::Arrangement;
 use crate::connection::{Connection, ConnectionKey, Definition, refresh_labels};
+use crate::connector::kafka::command::DEFAULT_SCAN;
 use crate::editor::{KeyboardMode, SqlEditor};
 use crate::exec::{ConnectionId, ConsoleId};
 use crate::export::ExportChoices;
@@ -181,6 +182,7 @@ impl Persist {
         let settings = &mut options.settings;
         settings.page_size = config.page_size.unwrap_or(settings.page_size);
         settings.row_cap = config.row_cap.unwrap_or(settings.row_cap);
+        settings.max_scan = config.max_scan.unwrap_or(DEFAULT_SCAN);
         settings.cap_in_sql = config.cap_in_sql;
         settings.budget_bytes = config.budget_bytes.unwrap_or(settings.budget_bytes);
         options.keyboard = config.keyboard;
@@ -343,6 +345,7 @@ impl App {
         self.set_ai_preferences(config.ai_completion.clone());
         self.settings.page_size = config.page_size.unwrap_or(self.settings.page_size);
         self.settings.row_cap = config.row_cap.unwrap_or(self.settings.row_cap);
+        self.settings.max_scan = config.max_scan.unwrap_or(DEFAULT_SCAN);
         self.settings.cap_in_sql = config.cap_in_sql;
         if let Some(bytes) = config.budget_bytes {
             self.settings.budget_bytes = bytes;
@@ -563,15 +566,21 @@ impl App {
             self.status = Some(text::CONFIG_BLOCKED.to_owned());
             return;
         }
-        let global = config::preferences(&persist.store.global, Scope::Global);
+        let global = config::preferences_and_hash(&persist.store.global, Scope::Global);
         let project = persist
             .store
             .project
             .as_ref()
-            .map(|root| config::preferences(root, Scope::Project));
+            .map(|root| config::preferences_and_hash(root, Scope::Project));
         let project = project.transpose();
         match (global, project) {
-            (Ok(global), Ok(project)) => {
+            (Ok((global, global_hash)), Ok(project)) => {
+                let mut hashes = vec![(Scope::Global, global_hash)];
+                let project = project.map(|(project, hash)| {
+                    hashes.push((Scope::Project, hash));
+                    project
+                });
+                self.modals.settings_hashes = hashes;
                 let (custom, notes) = load_themes(&persist.store);
                 if let Some(note) = notes.first() {
                     self.status = Some(note.clone());

@@ -745,7 +745,7 @@ SQLN does not use an unverified TLS connection. Even `sslmode=require` and `veri
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
 `rediss`, `valkeys`, and `kafkas` always require verified TLS.
 Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
-Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits.
+Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits. The **Max scan** field (`maxScan` in `config.json`) sets the `SCAN` that SQLN adds to a read without its own `SCAN`, from a console or an MCP agent. Empty uses **Kafka max scan** of Settings, 100000 by default.
 Kafka takes `topics=<patterns>` to show only some topics in the catalog, such as `topics=orders.*,!*.dlq`. The form has the same **Topics** field. Reads of other topics still run.
 Without a CA file, Kafka verifies with the system roots only.
 

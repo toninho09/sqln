@@ -51,7 +51,10 @@ fn certificate_fix(error: &(dyn Error + 'static)) -> Option<Fix> {
 
 fn io_fix(kind: io::ErrorKind, address: &Address) -> Option<Fix> {
     match kind {
-        io::ErrorKind::ConnectionRefused => Some(Fix::Port),
+        // A socket file without a server also refuses, but it has no port to change.
+        io::ErrorKind::ConnectionRefused if matches!(address, Address::Tcp { .. }) => {
+            Some(Fix::Port)
+        }
         io::ErrorKind::NotFound if matches!(address, Address::Socket(_)) => Some(Fix::Socket),
         io::ErrorKind::HostUnreachable | io::ErrorKind::NetworkUnreachable => Some(Fix::Host),
         io::ErrorKind::TimedOut => Some(Fix::ConnectLimit),
@@ -117,6 +120,13 @@ mod tests {
     fn a_refused_port_asks_for_the_port() {
         let error = io::Error::from(io::ErrorKind::ConnectionRefused);
         assert_eq!(network_fix(&error, &tcp()), Some(Fix::Port));
+    }
+
+    #[test]
+    fn a_refused_socket_does_not_ask_for_the_port() {
+        let error = io::Error::from(io::ErrorKind::ConnectionRefused);
+        let socket = Address::Socket(PathBuf::from("/tmp/.s.PGSQL.5432"));
+        assert_eq!(network_fix(&error, &socket), None);
     }
 
     #[test]

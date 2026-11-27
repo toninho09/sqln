@@ -251,7 +251,7 @@ The history reopens section 17 of the plan, which kept it out of the first versi
 | History | File | `history.jsonl` in the global folder, permission `0600`, on by default | Per project; memory only | Old projects do not have that line in the `.gitignore` |
 | History | Content | Each console statement that reached the database, with time, connection, and success or failure | Time and rows | YAGNI |
 | History | Outside | Tables, catalog, export, and connections without a form entry | Record everything | Only the user text matters |
-| History | Secrets | Does not record `PASSWORD`, `PASSWD`, `IDENTIFIED`, `REQUIREPASS`, and `MASTERAUTH`, nor Redis `AUTH`, `ACL`, and `HELLO` | Record everything | Follows the `mysql` client rule |
+| History | Secrets | Does not record `PASSWORD`, `PASSWD`, `IDENTIFIED`, `REQUIREPASS`, and `MASTERAUTH`, nor Redis `AUTH`, `ACL`, `HELLO`, and `MIGRATE` (its `AUTH` holds a password) | Record everything | Follows the `mysql` client rule |
 | History | Limits | File up to 8 MiB; at startup, a larger file keeps the newest 4 MiB. A statement above 64 KiB and a back-to-back repetition do not enter | No limit | The file grows without limit and the window reads everything |
 | History | Write | One write per frame, with the file opened again | File open all the time | `trim` replaces the file, and another instance would keep writing to the old file |
 | History | Window | `Ctrl+W H` and palette. Lists the console connection, with a word filter | All connections | The SQL of another database rarely serves |

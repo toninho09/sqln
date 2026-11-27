@@ -77,6 +77,22 @@ fn postgres_escape_string_uses_backslash() {
 }
 
 #[test]
+fn duckdb_reads_strings_and_comments_as_postgres_does() {
+    assert_eq!(
+        texts("SELECT $$a;b$$; SELECT 2;", Dialect::DuckDb),
+        ["SELECT $$a;b$$", "SELECT 2"]
+    );
+    assert_eq!(
+        texts("/* a /* b */ SELECT 1; */ SELECT 2;", Dialect::DuckDb),
+        ["SELECT 2"]
+    );
+    assert_eq!(
+        texts(r"SELECT E'a\';b'; SELECT 2;", Dialect::DuckDb),
+        [r"SELECT E'a\';b'", "SELECT 2"]
+    );
+}
+
+#[test]
 fn postgres_begin_atomic_is_one_statement() {
     let sql = "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; SELECT 2; END; SELECT 3;";
     assert_eq!(texts(sql, Dialect::Postgres).len(), 2);

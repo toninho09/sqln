@@ -110,6 +110,8 @@ SELECT * FROM orders LIMIT 100;
 SELECT * FROM orders WHERE value.status = 'failed' LIMIT 100 SCAN 50000;
 ```
 
+A read without its own `SCAN` gets `SCAN 100000` at its end, also with `LIMIT` or a start, because `LIMIT` counts only the matches and a start does not end the read. **Kafka max scan** in Settings (`maxScan`) changes the number, and the **Max scan** field of a connection replaces it for that connection. Messages shows the added `SCAN`, and the editor text stays the same. An export and `sqln --execute` read all messages, as they also skip the row cap. Write your own `SCAN` to read more.
+
 ## Watch new messages as they arrive
 
 `EMIT CHANGES` runs a continuous read. It starts at `LATEST` and waits for new messages until you press **Stop**. The live grid keeps a row cap and removes the oldest rows:
@@ -567,7 +569,7 @@ The AI completion works in a Kafka console, as in a SQL console. See [AI complet
 - A request sends the topic of the statement at the cursor, with its Schema Registry fields. Without a topic, it sends the topic names that start with the typed text first.
 
 An MCP agent gets the same guide in `syntax.Kafka` of its first `get_context`. It reads the fields of a topic with `describe`, and it runs finite reads without full access. `TAIL` and `EMIT CHANGES` do not run through MCP.
-An agent read without `LIMIT`, `SCAN`, or a start gets `SCAN 100000`, and each result tells the agent how its read ended. See [MCP](MCP.md).
+An agent read follows the **Max scan** rule of [Read a finite number of messages](#read-a-finite-number-of-messages), and each result tells the agent how its read ended. See [MCP](MCP.md).
 
 ## Common recipes
 
@@ -629,7 +631,7 @@ SELECT * FROM orders WHERE value IS NULL LIMIT 50;
 
 - A plain `SELECT` starts at `EARLIEST` and stops at the last message. `EMIT CHANGES` starts at `LATEST` and waits until **Stop**.
 - `EMIT CHANGES` accepts neither `LIMIT` nor `SCAN`.
-- `LIMIT` caps matching rows. `SCAN` caps examined messages.
+- `LIMIT` caps matching rows. `SCAN` caps examined messages. A read without `SCAN` gets **Kafka max scan**, 100000 by default.
 - The summary line shows the scanned messages, the speed, and the size while a read runs.
 - A final `SELECT` can omit `;`. End a statement with `;` before another one.
 - Start a line with `#` for a comment.

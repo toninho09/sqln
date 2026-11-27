@@ -184,8 +184,8 @@ pub trait Features: Sync {
     fn family(&self) -> Option<Family>;
     /// The statement of an agent read with a bound that the agent did not write, or
     /// `None` when the statement keeps its text. A Kafka read without a bound examines
-    /// the whole topic, so it gets a `SCAN`.
-    fn agent_bound(&self, sql: &str) -> Option<String>;
+    /// the whole topic, so it gets `SCAN scan`.
+    fn default_bound(&self, sql: &str, scan: u64) -> Option<String>;
     /// The name of the dialect in the MCP replies, such as `dialect` of `get_context` and
     /// the key of `syntax`. Agents rely on it, so it never changes with a Rust rename.
     fn agent_name(&self) -> &'static str;

@@ -53,7 +53,7 @@ JOIN, GROUP BY, COUNT and other aggregates, ORDER BY, DISTINCT, HAVING, UNION, s
 - Write each condition with an operator: value.paid = true, not value.paid.
 - Use single quotes for text. Use double quotes only for names.
 - = and IN compare text with its case: 'FAILED' is not 'failed'. Write enum values exactly as the schema writes them. CONTAINS and ILIKE ignore case; MATCHES ignores case with (?i).
-- Bound a read of a large topic with LIMIT, SCAN, START AT, or a time condition.
+- Bound a read of a large topic with SCAN. LIMIT counts only the matches, and START AT or a time condition only moves the start. SQLN adds a SCAN to a read without one.
 - Partitions have no global order.
 - A missing path, a wrong type, or a value without JSON gives NULL. Text functions need text: CAST(value.n AS TEXT).
 

@@ -100,6 +100,11 @@ pub enum ExecEvent {
         key: StatementKey,
         rows: usize,
     },
+    /// The Kafka read received `SCAN scan` at its end, because it had no `SCAN`.
+    ScanAdded {
+        key: StatementKey,
+        scan: u64,
+    },
     StatementFinished {
         key: StatementKey,
         status: StatementStatus,
@@ -226,6 +231,7 @@ impl ExecEvent {
             | ExecEvent::ResultDone { key, .. }
             | ExecEvent::Notice { key, .. }
             | ExecEvent::LimitAdded { key, .. }
+            | ExecEvent::ScanAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.console),
             ExecEvent::AgentMetadata { .. }
             | ExecEvent::CommandLog { .. }
@@ -254,6 +260,7 @@ impl ExecEvent {
             | ExecEvent::ResultDone { key, .. }
             | ExecEvent::Notice { key, .. }
             | ExecEvent::LimitAdded { key, .. }
+            | ExecEvent::ScanAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.execution),
             _ => None,
         }

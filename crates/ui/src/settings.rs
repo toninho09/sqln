@@ -34,6 +34,8 @@ pub enum Field {
     Keyboard,
     PageSize,
     RowCap,
+    /// The `SCAN` that a Kafka read without its own `SCAN` gets.
+    MaxScan,
     CapInSql,
     Budget,
     ReopenTabs,
@@ -116,6 +118,7 @@ pub const SECTIONS: [Section; 7] = [
             Field::PageSize,
             Field::RowCap,
             Field::CapInSql,
+            Field::MaxScan,
             Field::Budget,
             Field::FormatJson,
             Field::ShowSystemCommands,
@@ -276,6 +279,7 @@ struct Draft {
     keyboard: Option<KeyboardName>,
     page_size: LineInput,
     row_cap: LineInput,
+    max_scan: LineInput,
     cap_in_sql: Option<bool>,
     budget: LineInput,
     undo_limit: LineInput,
@@ -316,6 +320,7 @@ impl Draft {
             keyboard: preferences.keyboard_mode,
             page_size: number_text(preferences.page_size),
             row_cap: number_text(preferences.row_cap),
+            max_scan: number_text(preferences.max_scan),
             cap_in_sql: preferences.cap_in_sql,
             budget: number_text(mebibytes(preferences.grid_budget_bytes)),
             undo_limit: number_text(mebibytes(preferences.undo_limit_bytes)),
@@ -546,6 +551,7 @@ impl SettingsForm {
         match field {
             Field::PageSize => Some(&draft.page_size),
             Field::RowCap => Some(&draft.row_cap),
+            Field::MaxScan => Some(&draft.max_scan),
             Field::Budget => Some(&draft.budget),
             Field::UndoLimit => Some(&draft.undo_limit),
             Field::BellAfter => Some(&draft.bell_after),
@@ -582,6 +588,7 @@ impl SettingsForm {
         match field {
             Field::PageSize => Some(&mut draft.page_size),
             Field::RowCap => Some(&mut draft.row_cap),
+            Field::MaxScan => Some(&mut draft.max_scan),
             Field::Budget => Some(&mut draft.budget),
             Field::UndoLimit => Some(&mut draft.undo_limit),
             Field::BellAfter => Some(&mut draft.bell_after),
@@ -605,6 +612,7 @@ impl SettingsForm {
             Field::Keyboard => global.keyboard_mode.map(text::keyboard_name),
             Field::PageSize => global.page_size.map(|value| value.to_string()),
             Field::RowCap => global.row_cap.map(|value| value.to_string()),
+            Field::MaxScan => global.max_scan.map(|value| value.to_string()),
             Field::CapInSql => global
                 .cap_in_sql
                 .map(|value| text::on_off(value).to_owned()),
@@ -1134,6 +1142,8 @@ impl SettingsForm {
         self.validate_shortcuts(&preferences)?;
         preferences.page_size = parse(&draft.page_size, text::FIELD_PAGE_SIZE)?;
         preferences.row_cap = parse(&draft.row_cap, text::FIELD_ROW_CAP)?;
+        preferences.max_scan = parse(&draft.max_scan, text::FIELD_SETTINGS_MAX_SCAN)?
+            .map(|scan| u64::try_from(scan).unwrap_or(u64::MAX));
         preferences.bell_after_seconds = parse_seconds(&draft.bell_after, text::FIELD_BELL_AFTER)?;
         preferences.grid_budget_bytes =
             parse_bytes(&draft.budget, text::FIELD_BUDGET, base.grid_budget_bytes)?;

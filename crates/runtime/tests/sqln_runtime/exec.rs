@@ -695,6 +695,34 @@ fn read_only_applies_at_each_reservation() {
 }
 
 #[test]
+fn a_connection_change_during_an_execution_acts_from_the_next_one() {
+    let path = temp_db!("rebind-busy");
+    let mut h = Harness::with_path(&path, Settings::default());
+    h.run(&["CREATE TABLE t(a)"]);
+    let execution = h.manager.run(
+        h.console,
+        vec![HUGE_COUNT.to_owned()],
+        RunOptions::default(),
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    let mut target = SqliteTarget::new(&path);
+    target.busy_timeout = Duration::from_millis(100);
+    let read_only = Settings {
+        read_only: true,
+        ..Settings::default()
+    };
+    h.manager.replace_connection(
+        h.connection,
+        Arc::new(SqliteConnector::new(target)),
+        read_only,
+    );
+    h.manager.stop(h.console);
+    assert_eq!(h.collect(execution).end, Some(ExecutionEnd::Stopped));
+    let run = h.run(&["INSERT INTO t VALUES (1)"]);
+    assert_eq!(run.fixes, [Some(Fix::ReadOnly)], "{run:?}");
+}
+
+#[test]
 fn a_locked_database_shows_an_error_after_the_lock_time_limit() {
     let mut h = Harness::open("locked", Settings::default());
     h.run(&[

@@ -51,16 +51,10 @@ impl App {
                         }
                         job.state = "ready";
                         job.default_scan = bounded;
-                        if bounded {
+                        if let Some(scan) = bounded {
                             let session = job.session.clone();
                             let connection = job.connections.first().map(|(id, _)| *id);
-                            self.agent_log(
-                                &session,
-                                connection,
-                                &text::agent_default_scan(
-                                    crate::connector::kafka::command::AGENT_SCAN,
-                                ),
-                            );
+                            self.agent_log(&session, connection, &text::agent_default_scan(scan));
                         }
                     }
                     Err(error) => self.fail_agent_job(&id, &error.message),
@@ -135,9 +129,14 @@ impl App {
                     fix,
                     ..
                 } => {
-                    if let StatementStatus::Error(message) = status {
-                        job.message = Some(message.clone());
-                        job.fix = *fix;
+                    match status {
+                        StatementStatus::Error(message) => {
+                            job.message = Some(message.clone());
+                            job.fix = *fix;
+                        }
+                        // A time limit has no message, but its fix explains the failure.
+                        StatementStatus::Timeout => job.fix = *fix,
+                        _ => {}
                     }
                     let notices = std::mem::take(&mut job.notices);
                     if matches!(job.output, Output::Query)
@@ -238,7 +237,7 @@ impl App {
             if job.ends.values().any(|end| *end != ExecutionEnd::Completed) {
                 let failure = match &job.message {
                     Some(message) => Failure::new(message.clone(), job.fix),
-                    None => Failure::from("The assistant operation did not complete."),
+                    None => Failure::new("The assistant operation did not complete.", job.fix),
                 };
                 self.fail_agent_job_with(&id, &failure);
                 continue;

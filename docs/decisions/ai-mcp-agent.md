@@ -179,7 +179,7 @@ This entry replaces the **One guide** delivery of `get_context` in the Kafka ent
 | 1 | Connection facts | `get_context` gives `production`, `read_only`, and `default_schema`. `data_edit` leaves | Keep the fixed `data_edit` | The agent knows which runs ask or refuse |
 | 2 | Statement end | `statements` gives `limit` and `notices` (10 notices, 2 KiB) | Messages only | The agent must not read part of the rows as all rows |
 | 3 | Kafka read end | Each Kafka result gives `read`: scanned, matched, and end. A scan without match adds `next_action` | Notice text only | Zero rows after `SCAN` is not an empty topic |
-| 4 | Default scan | SQLN adds `SCAN 100000` to an agent read without `LIMIT`, `SCAN`, or a start, at each access level | Refuse the read; keep only advice | User choice. The read always ends |
+| 4 | Default scan | SQLN adds `SCAN 100000` to an agent read without its own `SCAN`, at each access level. `LIMIT` and a start do not skip it. **Kafka max scan** in Settings (`maxScan`) and the **Max scan** field of the connection change the number. Console reads get the same rule, see [kafka.md](kafka.md) | Refuse the read; keep only advice. Skip the scan for `LIMIT` or a start | User choice, changed 2026-11-27. `LIMIT` counts only the matches, and a start does not end the read, so these reads examined the whole topic |
 | 5 | Guide delivery | Once per session, only with a Kafka connection; `include_syntax` sends it again | Each reply; a separate tool | User choice. Fewer tokens |
 | 6 | Topic kind | `describe` accepts the kind `topic` without a schema. The older form stays | Only the older form | The agent does not guess `schema: "topics"` |
 | 7 | IPC 3 | Requests carry an id. Instances of another version appear with `compatible: false` and give `version_mismatch` | Hide them | User choice. One version change for the contract |
@@ -231,7 +231,7 @@ The keys are optional, so older files stay valid without a migration.
 | 8 | Levels of the default | All levels, limited by **Max access**. The run protections stay | Up to Allow all | User choice |
 | 9 | **Remember clients** (`mcpRememberClients`) | Off: each new session asks again. On by default. The memory stays out of the file | No field | User choice |
 | 10 | Order | A remembered level comes before the default access | Default first | The remembered level is a choice of the user |
-| 11 | Scope | Global and Project, as the other sections | Global only | User choice |
+| 11 | Scope | Global and Project, as the other sections. A project value replaces the global value, also when it gives more access, such as **Default access** Full access | The project only lowers the access | User choice, 2026-11-27. A project limits the agent when it sets a lower value |
 | 12 | Name | **IA** | **AI**, **Agent**, **MCP** | User choice |
 
 ## Agent tab lifetime and place — 2026-11-05

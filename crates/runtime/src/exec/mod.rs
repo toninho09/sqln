@@ -462,10 +462,7 @@ impl Manager {
                     }.map_err(Failure::from)
                 };
                 let limit = binding.settings().sql_timeout;
-                let result = match limit {
-                    Some(limit) => tokio::time::timeout(limit, metadata).await.map_err(|_| Failure::new("The metadata time limit ended. Try a smaller operation.", Some(Fix::SqlTimeout)))?,
-                    None => metadata.await,
-                };
+                let result = within_limit(limit, metadata).await?;
                 lease.release().await;
                 result
             };
@@ -532,9 +529,14 @@ impl Manager {
         self.runtime.spawn(async move {
             let catalog = match binding.pool.acquire_traced(trace).await {
                 Ok(mut lease) => {
-                    let result = lease.session().read_catalog_of(&schemas).await;
-                    lease.release().await;
-                    result.map_err(|error| Failure::from(error).one_line())
+                    let limit = binding.settings().sql_timeout;
+                    match within_limit(limit, lease.session().read_catalog_of(&schemas)).await {
+                        Ok(result) => {
+                            lease.release().await;
+                            result.map_err(|error| Failure::from(error).one_line())
+                        }
+                        Err(failure) => Err(failure.one_line()),
+                    }
                 }
                 Err(error) => {
                     if let Some(refusal) = binding.refusal(&error) {
@@ -565,26 +567,41 @@ impl Manager {
                     Ok(mut lease) => {
                         let session = lease.session();
                         let (schema, name) = (&relation.schema, &relation.relation);
-                        let columns = session.read_noted_columns(schema, name).await;
-                        // A failure here only costs the suggestions of `JOIN` and the key
-                        // navigation.
-                        let (keys, referencing) = match &columns {
-                            Ok(_) => (
-                                session.read_foreign_keys(schema, name).await,
-                                session.read_referencing_keys(schema, name).await,
+                        let read = async {
+                            let columns = session.read_noted_columns(schema, name).await;
+                            // A failure here only costs the suggestions of `JOIN` and the
+                            // key navigation.
+                            let (keys, referencing) = match &columns {
+                                Ok(_) => (
+                                    session.read_foreign_keys(schema, name).await,
+                                    session.read_referencing_keys(schema, name).await,
+                                ),
+                                Err(_) => (Ok(Vec::new()), Ok(Vec::new())),
+                            };
+                            (columns, keys, referencing)
+                        };
+                        let limit = binding.settings().sql_timeout;
+                        match within_limit(limit, read).await {
+                            Ok((columns, keys, referencing)) => {
+                                lease.release().await;
+                                let columns = match columns {
+                                    Ok((columns, notes)) => (Ok(columns), notes),
+                                    Err(error) => {
+                                        (Err(Failure::from(error).one_line()), Vec::new())
+                                    }
+                                };
+                                (
+                                    columns,
+                                    keys.unwrap_or_default(),
+                                    referencing.unwrap_or_default(),
+                                )
+                            }
+                            Err(failure) => (
+                                (Err(failure.one_line()), Vec::new()),
+                                Vec::new(),
+                                Vec::new(),
                             ),
-                            Err(_) => (Ok(Vec::new()), Ok(Vec::new())),
-                        };
-                        lease.release().await;
-                        let columns = match columns {
-                            Ok((columns, notes)) => (Ok(columns), notes),
-                            Err(error) => (Err(Failure::from(error).one_line()), Vec::new()),
-                        };
-                        (
-                            columns,
-                            keys.unwrap_or_default(),
-                            referencing.unwrap_or_default(),
-                        )
+                        }
                     }
                     Err(error) => {
                         if let Some(refusal) = binding.refusal(&error) {
@@ -682,5 +699,22 @@ async fn relay_events(mut events: Receiver<ExecEvent>, relay: Sender<ExecEvent>,
             return;
         }
         wake.wake();
+    }
+}
+
+/// Runs a metadata read within the statement time limit of the connection. At the limit
+/// the caller drops its lease, so the pool closes the session in an unknown state.
+async fn within_limit<T>(
+    limit: Option<Duration>,
+    read: impl std::future::Future<Output = T>,
+) -> Result<T, Failure> {
+    match limit {
+        Some(limit) => tokio::time::timeout(limit, read).await.map_err(|_| {
+            Failure::new(
+                "The metadata time limit ended. Try a smaller operation.",
+                Some(Fix::SqlTimeout),
+            )
+        }),
+        None => Ok(read.await),
     }
 }

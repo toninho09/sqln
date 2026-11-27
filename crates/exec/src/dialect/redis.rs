@@ -73,7 +73,7 @@ impl Features for Redis {
         None
     }
 
-    fn agent_bound(&self, _: &str) -> Option<String> {
+    fn default_bound(&self, _: &str, _: u64) -> Option<String> {
         None
     }
 

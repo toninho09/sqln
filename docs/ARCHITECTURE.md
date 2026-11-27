@@ -700,6 +700,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "keyboardMode": "conventional",
     "pageSize": 100,
     "rowCap": 1000,
+    "maxScan": 100000,
     "capInSql": true,
     "gridBudgetBytes": 268435456,
     "undoLimitBytes": 67108864,
@@ -765,6 +766,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 | `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
 | `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |
 | `consumerGroup` | Optional, only for `kafka`. The `group.id` of the reads, without spaces or control characters. Without the field, the reads use `sqln-read`. SQLN never joins the group and never commits |
+| `maxScan` | Optional, only for `kafka`. A number greater than 0: the `SCAN` that SQLN adds to a read without its own `SCAN`, from a console or an MCP agent. Without the field, the read gets `maxScan` of the preferences, 100000 by default |
 | `warehouse` | Required for `databricks`, and refused for other kinds. The SQL warehouse id, with only ASCII letters and digits. `host` is the workspace host, `database` is the optional start catalog, and the token is the password |
 | `topics` | Optional, only for `kafka`. A list of topic patterns that the catalog shows: `*` matches any text, and `!` at the start removes topics. Without the field, or with an empty list, the catalog shows all topics. Reads of other topics still run |
 

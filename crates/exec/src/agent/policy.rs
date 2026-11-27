@@ -83,6 +83,19 @@ pub fn validate(statements: &[String], dialect: Dialect) -> Result<(), Error> {
 /// Characters of a file path or a URL. A table name rarely has them.
 const PATH_CHARACTERS: [char; 4] = ['.', '/', '\\', ':'];
 
+/// Formats that read a file when a quoted path follows them, as in Databricks.
+const FILE_FORMATS: [&str; 9] = [
+    "avro",
+    "binaryfile",
+    "csv",
+    "delta",
+    "json",
+    "orc",
+    "parquet",
+    "text",
+    "xml",
+];
+
 struct Read {
     /// The database reads a quoted table name as a file or a URL.
     file_names: bool,
@@ -114,16 +127,23 @@ impl Visitor for Read {
     /// DuckDB and Databricks. These sources have no native read-only context that stops
     /// such reads, so the policy refuses these names.
     fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<()> {
+        let mut format = false;
         for part in &relation.0 {
             let ObjectNamePart::Identifier(ident) = part else {
                 return ControlFlow::Break(());
             };
             let quoted = ident.quote_style.is_some();
+            // A quoted name after a format, such as ``parquet.`export` ``, is a path
+            // without path characters.
             if ident.quote_style == Some('\'')
-                || (self.file_names && quoted && ident.value.contains(PATH_CHARACTERS))
+                || (self.file_names && quoted && (format || ident.value.contains(PATH_CHARACTERS)))
             {
                 return ControlFlow::Break(());
             }
+            format = !quoted
+                && FILE_FORMATS
+                    .iter()
+                    .any(|name| ident.value.eq_ignore_ascii_case(name));
         }
         ControlFlow::Continue(())
     }

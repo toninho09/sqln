@@ -16,7 +16,9 @@ pub const AGENT_KAFKA_NO_FIELDS: &str = "This topic has no fields: the connectio
 pub const AGENT_KAFKA_SCAN_EMPTY: &str = "The read reached its SCAN before any message matched. The rest of the topic was not read: raise SCAN, or start nearer the messages with START AT or a time condition.";
 /// The note of an agent read that SQLN bounded.
 pub fn agent_default_scan(scan: u64) -> String {
-    format!("SQLN added SCAN {scan} to the agent read, because it had no LIMIT, SCAN, or START AT.")
+    format!(
+        "SQLN added SCAN {scan} to the agent read, because it had no SCAN. LIMIT counts only the matches, and START AT does not end the read."
+    )
 }
 pub const AGENT_KAFKA_GUIDE_SENT: &str = "The Kafka guide was in an earlier get_context reply of this session. Call get_context with include_syntax to read it again.";
 pub const KAFKA_BAD_TOPICS: &str = "Separate the topic patterns with commas, such as orders.*, !*.dlq. A pattern cannot hold a space or a control character, and ! needs a pattern.";
@@ -215,6 +217,9 @@ pub fn kafka_read_end(progress: &ProgressSnapshot) -> String {
 pub const FIELD_SASL: &str = "SASL";
 pub const FIELD_CONSUMER_GROUP: &str = "Consumer group";
 pub const FIELD_TOPICS: &str = "Topics";
+pub const FIELD_MAX_SCAN: &str = "Max scan";
+pub const KAFKA_BAD_MAX_SCAN: &str =
+    "Enter a number of messages greater than 0, or leave it empty to use Max scan of the settings.";
 pub const FIELD_REGISTRY_URL: &str = "Registry URL";
 pub const FIELD_REGISTRY_USER: &str = "Registry user";
 pub const FIELD_REGISTRY_PASSWORD: &str = "Registry password";

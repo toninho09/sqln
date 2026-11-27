@@ -1,4 +1,4 @@
-use sqln_core::grid::{ResultTable, Value};
+use sqln_core::grid::{GridView, ResultTable, Value};
 
 #[test]
 fn selected_tsv_keeps_quotes_spaces_binary_and_missing_values() {
@@ -102,4 +102,22 @@ fn hexadecimal_keeps_the_high_digit_before_the_low_one() {
         let expected: String = bytes.iter().map(|byte| format!("{byte:02X}")).collect();
         assert_eq!(text, format!("0x{expected}"), "length {length}");
     }
+}
+
+#[test]
+fn a_copy_reads_only_rows_that_exist() {
+    let mut table = ResultTable::new(vec!["a".into()]);
+    table.append(vec![vec![Value::Text("x")].into_iter().collect()], 0);
+    // A cursor and a selection past the end, as after the removal of new rows.
+    let view = GridView {
+        row: 3,
+        anchor: Some((5, 0)),
+        ..GridView::default()
+    };
+    assert_eq!(view.copy(&table).as_deref(), Some("x\n"));
+    let mut view = view;
+    table.rows.clear();
+    view.move_to(3, 0, &table, false);
+    assert_eq!((view.row, view.anchor), (0, None));
+    assert_eq!(view.copy(&table), None);
 }

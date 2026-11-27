@@ -4798,6 +4798,17 @@ fn results_carry_the_column_types_of_the_database() {
             Kind::MySql => {
                 assert_eq!(amount, Some("decimal"));
                 assert_eq!(label, Some("varchar"));
+                // The server sends ENUM and SET as text columns with a flag.
+                h.run_ok(&[
+                    "DROP TABLE IF EXISTS t_enum_types",
+                    "CREATE TABLE t_enum_types (s ENUM('new', 'paid'), f SET('a', 'b'))",
+                    "INSERT INTO t_enum_types VALUES ('new', 'a,b')",
+                ]);
+                let run = h.run_ok(&["SELECT s, f FROM t_enum_types"]);
+                let types = &run.types[0];
+                assert_eq!(types[0].as_deref(), Some("enum"), "{run:?}");
+                assert_eq!(types[1].as_deref(), Some("set"), "{run:?}");
+                h.run_ok(&["DROP TABLE t_enum_types"]);
             }
         }
     }

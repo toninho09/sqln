@@ -286,6 +286,9 @@ pub struct Preferences {
     pub page_size: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row_cap: Option<usize>,
+    /// The `SCAN` that a Kafka read without its own `SCAN` gets. Missing means 100000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_scan: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cap_in_sql: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -474,6 +477,10 @@ pub struct ConnectionEntry {
     /// The patterns of the topics that a Kafka catalog shows. Empty shows all topics.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub topics: Vec<String>,
+    /// The most messages that a Kafka read without its own `SCAN` examines. Missing keeps
+    /// `maxScan` of the preferences.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_scan: Option<u64>,
     /// The SQL warehouse id of a Databricks connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warehouse: Option<String>,
@@ -509,6 +516,8 @@ pub struct Config {
     pub keyboard: KeyboardMode,
     pub page_size: Option<usize>,
     pub row_cap: Option<usize>,
+    /// The `SCAN` that a Kafka read without its own `SCAN` gets.
+    pub max_scan: Option<u64>,
     /// True when a plain read without its own limit receives `LIMIT` with the row cap.
     pub cap_in_sql: bool,
     pub budget_bytes: Option<usize>,
@@ -578,6 +587,9 @@ fn validate(file: &ConfigFile, scope: Scope) -> Result<(), String> {
         if value == Some(0) {
             return Err(format!("{name} needs 1 or more."));
         }
+    }
+    if preferences.max_scan == Some(0) {
+        return Err("maxScan needs 1 or more.".to_owned());
     }
     if let Some(export) = &preferences.export {
         if scope == Scope::Project {
@@ -686,12 +698,16 @@ fn validate_entry(entry: &ConnectionEntry, scope: Scope) -> Result<(), String> {
                 && (entry.sasl.is_some()
                     || entry.schema_registry.is_some()
                     || entry.consumer_group.is_some()
-                    || !entry.topics.is_empty())
+                    || !entry.topics.is_empty()
+                    || entry.max_scan.is_some())
             {
                 return Err(
-                    "sasl, schemaRegistry, consumerGroup, and topics are valid only for kafka."
+                    "sasl, schemaRegistry, consumerGroup, topics, and maxScan are valid only for kafka."
                         .to_owned(),
                 );
+            }
+            if entry.max_scan == Some(0) {
+                return Err(format!("maxScan: {}", crate::text::KAFKA_BAD_MAX_SCAN));
             }
             match (engine, entry.warehouse.as_deref()) {
                 (Engine::Databricks, warehouse) => {
@@ -824,6 +840,7 @@ pub fn to_definition(entry: &ConnectionEntry, base: PathBuf) -> Definition {
                     group: consumer_group(entry.consumer_group.as_deref().unwrap_or_default())
                         .unwrap_or_default(),
                     topics: entry.topics.clone(),
+                    max_scan: entry.max_scan,
                 },
                 databricks: DatabricksOptions {
                     warehouse: entry.warehouse.clone().unwrap_or_default(),
@@ -883,6 +900,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
         schema_registry: None,
         consumer_group: None,
         topics: Vec::new(),
+        max_scan: None,
         warehouse: None,
     };
     match &definition.source {
@@ -927,6 +945,7 @@ pub fn to_entry(id: &str, definition: &Definition) -> ConnectionEntry {
                         });
                 entry.consumer_group.clone_from(&target.kafka.group);
                 entry.topics.clone_from(&target.kafka.topics);
+                entry.max_scan = target.kafka.max_scan;
             }
             match &target.address {
                 Address::Tcp { host, port } => {
@@ -1100,6 +1119,9 @@ fn combine(
         keyboard,
         page_size: pick(|preferences| preferences.page_size),
         row_cap: pick(|preferences| preferences.row_cap),
+        max_scan: project
+            .and_then(|preferences| preferences.max_scan)
+            .or(global.max_scan),
         cap_in_sql: project
             .and_then(|preferences| preferences.cap_in_sql)
             .or(global.cap_in_sql)
@@ -1178,7 +1200,7 @@ pub enum Change {
 /// Applies a change to the file of a scope. It reads the file again under a lock,
 /// so that a change of another instance stays. It returns the hash of the new file.
 pub fn change_connections(root: &Root, scope: Scope, change: Change) -> Result<u64, String> {
-    change_file(root, scope, |config| match change {
+    change_file(root, scope, None, |config| match change {
         Change::Upsert(entry) => {
             match config
                 .connections
@@ -1209,44 +1231,66 @@ fn arrange(entries: &mut Vec<ConnectionEntry>, order: &[(String, Option<String>)
 
 /// Reads the preferences that the file of a scope declares.
 pub fn preferences(root: &Root, scope: Scope) -> Result<Preferences, String> {
-    let (_, result) = read_scope(root, scope);
+    preferences_and_hash(root, scope).map(|(preferences, _)| preferences)
+}
+
+/// Reads the preferences of a scope and the hash of its file. A missing file has no hash.
+pub fn preferences_and_hash(
+    root: &Root,
+    scope: Scope,
+) -> Result<(Preferences, Option<u64>), String> {
+    let (hash, result) = read_scope(root, scope);
     result
-        .map(|config| config.preferences)
+        .map(|config| (config.preferences, hash))
         .map_err(|error| error.to_string())
 }
 
-/// Replaces the preferences of a scope. It returns the hash of the new file.
+/// Replaces the preferences of a scope. `known` is the hash of the file that the values
+/// came from, so a change by another program is refused, not lost. It returns the hash
+/// of the new file.
 pub fn change_preferences(
     root: &Root,
     scope: Scope,
     preferences: Preferences,
+    known: Option<u64>,
 ) -> Result<u64, String> {
-    change_file(root, scope, |config| config.preferences = preferences)
+    change_file(root, scope, Some(known), |config| {
+        config.preferences = preferences;
+    })
 }
 
 /// Writes the choices of the import dialog. The other values of the file stay.
 pub fn change_import(root: &Root, import: ImportChoices) -> Result<u64, String> {
-    change_file(root, Scope::Global, |config| {
+    change_file(root, Scope::Global, None, |config| {
         config.preferences.import = Some(import);
     })
 }
 
 /// Writes the choices of the export dialog. The other values of the file stay.
 pub fn change_export(root: &Root, export: ExportChoices) -> Result<u64, String> {
-    change_file(root, Scope::Global, |config| {
+    change_file(root, Scope::Global, None, |config| {
         config.preferences.export = Some(export);
     })
 }
 
+/// Changes the file of a scope under its lock. With `known`, the file must still have
+/// that hash.
 fn change_file(
     root: &Root,
     scope: Scope,
+    known: Option<Option<u64>>,
     change: impl FnOnce(&mut ConfigFile),
 ) -> Result<u64, String> {
     let _lock =
         file::lock(&root.locks_dir().join("config.lock")).map_err(|error| error.to_string())?;
+    // The write replaces the target of a link, so the link stays, such as a link into a
+    // folder of dotfiles.
     let path = root.config_file();
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
     let (hash, result) = read_scope(root, scope);
+    if known.is_some_and(|known| known != hash) {
+        return Err(crate::text::SETTINGS_CHANGED_OUTSIDE.to_owned());
+    }
     let mut config = result.map_err(|error| error.to_string())?;
     change(&mut config);
     validate(&config, scope)?;

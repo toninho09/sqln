@@ -160,7 +160,7 @@ impl App {
                 results: Vec::new(),
                 statements: Vec::new(),
                 notices: Vec::new(),
-                default_scan: false,
+                default_scan: None,
                 rows: rows_of(None),
                 serial: self.agent.serial,
                 created: Instant::now(),
@@ -180,7 +180,15 @@ impl App {
     ) -> Reply {
         let index = self.agent_target(console)?;
         let connection = self.tabs.consoles[index].connection.ok_or_else(missing)?;
-        let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
+        let item = self.connection(connection).ok_or_else(missing)?;
+        let dialect = item.dialect;
+        // The connection value wins over Max scan of the settings.
+        let scan = item
+            .definition
+            .as_ref()
+            .map_or(self.settings.max_scan, |definition| {
+                definition.settings(&self.settings).max_scan
+            });
         let total = draft.plan.statements.iter().map(String::len).sum::<usize>();
         if total > agent::MAX_FRAME {
             return Err(Error::new(
@@ -241,7 +249,7 @@ impl App {
                         let mut bounded = false;
                         let statements: Vec<_> = statements
                             .into_iter()
-                            .map(|sql| match features.agent_bound(&sql) {
+                            .map(|sql| match features.default_bound(&sql, scan) {
                                 Some(sql) => {
                                     bounded = true;
                                     sql
@@ -249,7 +257,8 @@ impl App {
                                 None => sql,
                             })
                             .collect();
-                        ((raw.is_some() || bounded).then_some(statements), bounded)
+                        let scan = bounded.then_some(scan);
+                        ((raw.is_some() || bounded).then_some(statements), scan)
                     });
                     let _ = sender.send(Work::Validated(key, result));
                 });

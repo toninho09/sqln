@@ -50,7 +50,7 @@ Then call get_context for connections and tabs. Each connection has its dialect,
 Write SQL in the dialect of its connection. Before you write SQL, call describe for the tables, columns, topics, and topic fields; do not guess names. \
 describe with schema and no object reads the catalog of that schema; a relation with columns_loaded false needs describe with its object. \
 A Kafka connection does not accept standard SQL: follow syntax.Kafka, which the first get_context of the session holds; get_context with include_syntax sends it again. \
-Bind each Kafka read with LIMIT, SCAN, or START AT; SQLN adds a SCAN to a read without one. When describe gives a topic no fields, read a few messages with LIMIT 5 to learn the paths. \
+Bound each Kafka read with SCAN; SQLN adds a SCAN to a read without one, also with LIMIT or START AT. When describe gives a topic no fields, read a few messages with LIMIT 5 to learn the paths. \
 query runs SQL in your own console and returns its rows. Tools wait for the end of their task; call job when a reply says that the task continues. \
 Read each statement of a reply: limit means that the grid kept only part of the rows, and notices hold the database messages. \
 A fix in a statement or a reply names the connection setting or the server rule that caused the failure: tell it to the user, because you cannot change connections. A Kafka result has read, with scanned, matched, and the end of the read; end scan with no match does not mean an empty topic. \
@@ -218,10 +218,11 @@ fn response(reply: Reply) -> CallToolResult {
     CallToolResult::structured_error(error)
 }
 
-const SHORTENED: &str = "The reply was shortened to fit the MCP response. Read the omitted rows with read_result from next_offset, and an omitted artifact with job and artifact_offset.";
+const SHORTENED: &str = "The reply was shortened to fit the MCP response. Read the omitted rows with read_result from next_offset, and an omitted artifact with job and artifact_offset. Omitted notices are in the Messages of the console that ran the statement.";
 
 /// Removes one part that the agent can read again: rows of the last result page first,
-/// then the artifact page. Returns false when no such part remains.
+/// then the artifact page, then the notices of each statement from the last. Returns false
+/// when no such part remains.
 fn shorten(value: &mut Value) -> bool {
     if let Some(results) = value.get_mut("results").and_then(Value::as_array_mut) {
         let paged = results
@@ -254,6 +255,22 @@ fn shorten(value: &mut Value) -> bool {
     {
         value["artifact"] = Value::Null;
         value["artifact_omitted"] = json!(true);
+        return true;
+    }
+    // The notices of a statement also go to the Messages of the console that ran it.
+    if let Some(statement) = value
+        .get_mut("statements")
+        .and_then(Value::as_array_mut)
+        .and_then(|statements| {
+            statements
+                .iter_mut()
+                .rev()
+                .find(|statement| statement.get("notices").is_some())
+        })
+        && let Some(item) = statement.as_object_mut()
+    {
+        item.remove("notices");
+        item.insert("notices_omitted".to_owned(), json!(true));
         return true;
     }
     false

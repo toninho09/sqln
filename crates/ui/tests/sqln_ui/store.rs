@@ -952,7 +952,8 @@ fn moving_a_script_to_another_scope_copies_checks_and_removes_the_original() {
     let (from, to) = (&store.global, store.project.as_ref().unwrap());
     scripts::create(from, &meta("s1", "a", "old", Scope::Global), "SELECT 2;").unwrap();
     let moved = meta("s1", "a", "new", Scope::Project);
-    let hash = scripts::move_to(from, to, &moved).unwrap();
+    let known = file::Expect::Hash(file::hash(b"SELECT 2;"));
+    let hash = scripts::move_to(from, to, &moved, known).unwrap();
     assert_eq!(hash, file::hash(b"SELECT 2;"));
     assert!(scripts::list(from, Scope::Global).is_empty());
     let list = scripts::list(to, Scope::Project);
@@ -967,7 +968,15 @@ fn a_move_to_a_place_that_has_the_script_keeps_the_original() {
     let (from, to) = (&store.global, store.project.as_ref().unwrap());
     scripts::create(from, &meta("s1", "a", "old", Scope::Global), "mine").unwrap();
     scripts::create(to, &meta("s1", "a", "x", Scope::Project), "theirs").unwrap();
-    assert!(scripts::move_to(from, to, &meta("s1", "a", "new", Scope::Project)).is_err());
+    assert!(
+        scripts::move_to(
+            from,
+            to,
+            &meta("s1", "a", "new", Scope::Project),
+            file::Expect::Any,
+        )
+        .is_err()
+    );
     assert_eq!(scripts::read_text(from, "s1").unwrap().0, "mine");
     assert_eq!(scripts::read_text(to, "s1").unwrap().0, "theirs");
 }
@@ -1196,7 +1205,7 @@ fn a_custom_theme_round_trips_through_the_configuration() {
         )),
         ..config::Preferences::default()
     };
-    config::change_preferences(&store.global, Scope::Global, preferences).unwrap();
+    config::change_preferences(&store.global, Scope::Global, preferences, None).unwrap();
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(text.contains("\"custom\": \"mine\""), "{text}");
     let loaded = config::preferences(&store.global, Scope::Global).unwrap();

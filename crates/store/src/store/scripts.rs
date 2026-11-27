@@ -281,23 +281,40 @@ pub fn lock(root: &Root, id: &str) -> io::Result<Option<FileLock>> {
 /// Copies a script to another folder, checks the copy, and removes the original.
 /// `meta` describes the script in its new place. A text file that cannot be read
 /// keeps the original in its folder; only an absent text file moves as empty text.
-pub fn move_to(from: &Root, to: &Root, meta: &ScriptMeta) -> Result<u64, String> {
+/// A text that is not what `expect` names stays in its folder, so the editor does not
+/// take the text of another program as its own.
+pub fn move_to(
+    from: &Root,
+    to: &Root,
+    meta: &ScriptMeta,
+    expect: Expect,
+) -> Result<u64, WriteError> {
     let text = match read_text(from, &meta.id) {
+        Ok((_, hash)) if !matches!(expect, Expect::Any) && expect != Expect::Hash(hash) => {
+            return Err(WriteError::Changed);
+        }
         Ok((text, _)) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if matches!(expect, Expect::Hash(_)) {
+                return Err(WriteError::Removed);
+            }
+            String::new()
+        }
         Err(error) => {
-            return Err(format!(
+            return Err(WriteError::Failed(format!(
                 "SQLN cannot read the script, so it stays in its folder: {error}"
-            ));
+            )));
         }
     };
-    let hash = create(to, meta, &text)?;
+    let hash = create(to, meta, &text).map_err(WriteError::Failed)?;
     let copied = read_text(to, &meta.id);
     if !copied.is_ok_and(|(copy, copy_hash)| copy_hash == hash && copy == text) {
         // The original stays, so the copy leaves and a later try can create it again.
         let _ = remove(to, &meta.id);
-        return Err("The copy of the script does not match the original.".to_owned());
+        return Err(WriteError::Failed(
+            "The copy of the script does not match the original.".to_owned(),
+        ));
     }
-    remove(from, &meta.id)?;
+    remove(from, &meta.id).map_err(WriteError::Failed)?;
     Ok(hash)
 }

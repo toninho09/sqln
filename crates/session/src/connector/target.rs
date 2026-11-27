@@ -159,6 +159,9 @@ pub struct KafkaOptions {
     pub group: Option<String>,
     /// The patterns of the topics that the catalog shows. Empty shows all topics.
     pub topics: Vec<String>,
+    /// The most messages that a read without its own `SCAN` examines. `None` keeps the
+    /// value of the settings.
+    pub max_scan: Option<u64>,
 }
 
 impl KafkaOptions {
@@ -585,6 +588,7 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         }),
         group: parameters.group.take(),
         topics: std::mem::take(&mut parameters.topics),
+        max_scan: None,
     };
     if matches!(scheme.as_str(), "rediss" | "valkeys" | "kafkas") {
         if parameters.tls_mode.as_deref() == Some("disable") {

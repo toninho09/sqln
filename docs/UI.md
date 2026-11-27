@@ -1285,7 +1285,7 @@ The switch happens in the editor itself, so the selection and the history contin
 ```
 
 The **Editor** section includes **Autocomplete** and **Undo limit**, with 64 MiB per console as the conventional undo default.
-The **Results** section includes **Limit in SQL**, on by default, and **System commands**, off by default.
+The **Results** section includes **Limit in SQL**, on by default, **Kafka max scan**, 100000 by default, and **System commands**, off by default. **Kafka max scan** is the `SCAN` that a Kafka read without its own `SCAN` gets; the **Max scan** field of a Kafka connection replaces it. See [Kafka](KAFKA.md#read-a-finite-number-of-messages).
 **System commands** only filters the Messages view.
 
 The **MCP** section has the MCP fields. See [MCP settings](MCP.md#mcp-settings).

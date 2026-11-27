@@ -584,6 +584,11 @@ impl Console {
                 let message = text::statement_error(key.index, &text::limit_added(rows));
                 self.push_message(MessageLevel::Info, message);
             }
+            ExecEvent::ScanAdded { key, scan } if self.is_current(key.execution) => {
+                self.message_key = Some(key);
+                let message = text::statement_error(key.index, &text::scan_added(scan));
+                self.push_message(MessageLevel::Info, message);
+            }
             ExecEvent::StatementFinished {
                 key,
                 status,

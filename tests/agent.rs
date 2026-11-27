@@ -1091,6 +1091,11 @@ fn the_policy_rejects_session_changes_hidden_writes_unknown_calls_and_file_reads
             Dialect::Databricks,
             "SELECT * FROM delta.`s3://bucket/table`",
         ),
+        (Dialect::Databricks, "SELECT * FROM parquet.`export`"),
+        (
+            Dialect::DuckDb,
+            "SELECT $$'$$, * FROM read_text('/etc/hosts')",
+        ),
         (Dialect::Postgres, "SELECT * FROM 'things'"),
     ] {
         assert!(
@@ -1558,6 +1563,24 @@ fn full_access_keeps_a_read_only_connection_read_only() {
     assert_eq!(h.count(), 2);
     // The setting of the connection refused the write: the agent tells the user.
     let hint = sqln::connector::Fix::ReadOnly.hint();
+    assert_eq!(reply["statements"][0]["fix"], hint.as_str(), "{reply}");
+    assert_eq!(reply["fix"], hint.as_str(), "{reply}");
+}
+
+#[test]
+fn a_query_that_reaches_the_time_limit_gives_its_hint() {
+    let mut h = Harness::defined("agent-timeout", |definition| {
+        definition.sql_timeout = Some(Duration::from_millis(100));
+    });
+    // The read policy refuses a recursive query, so the test uses full access.
+    h.grant(3);
+    let job = h.query(
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000000000) \
+         SELECT count(*) FROM c",
+    );
+    let reply = h.wait_job(&job);
+    assert_eq!(reply["status"], "failed", "{reply}");
+    let hint = sqln::connector::Fix::SqlTimeout.hint();
     assert_eq!(reply["statements"][0]["fix"], hint.as_str(), "{reply}");
     assert_eq!(reply["fix"], hint.as_str(), "{reply}");
 }

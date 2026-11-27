@@ -196,7 +196,8 @@ const SECRET_WORDS: &[&str] = &[
 ];
 
 /// A Redis command with one of these names can carry a password.
-const SECRET_COMMANDS: &[&str] = &["AUTH", "ACL", "HELLO"];
+/// Redis commands that can hold a password. `MIGRATE` takes one after `AUTH` or `AUTH2`.
+const SECRET_COMMANDS: &[&str] = &["AUTH", "ACL", "HELLO", "MIGRATE"];
 
 /// Common functions of the two network databases that change no data.
 const PURE_FUNCTIONS: &[&str] = &[

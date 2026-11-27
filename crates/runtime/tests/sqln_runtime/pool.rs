@@ -533,3 +533,75 @@ async fn a_single_session_source_holds_one_place_and_no_idle_close() {
     assert_eq!(closed, 0);
     assert!(pool.has_sessions());
 }
+
+#[test]
+fn a_catalog_read_ends_at_the_time_limit_and_closes_its_session() {
+    let fake = works();
+    fake.hang_catalog();
+    let settings = Settings {
+        sql_timeout: Some(Duration::from_millis(100)),
+        ..Settings::default()
+    };
+    let (mut manager, mut events) = Manager::new(Arc::new(Budget::new(1 << 20))).unwrap();
+    let connection = manager.add_connection(fake.clone(), settings);
+    manager.load_catalog(connection, 0, Vec::new());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let message = loop {
+        assert!(Instant::now() < deadline, "the catalog read did not end");
+        if let Ok(ExecEvent::CatalogLoaded { catalog, .. }) = events.try_recv() {
+            break catalog.expect_err("the read reached the time limit");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    assert!(message.contains("time limit"), "{message}");
+    // The session in an unknown state does not return to the pool.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while manager.is_connected(connection) {
+        assert!(Instant::now() < deadline, "the session stayed open");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn a_kafka_read_without_scan_gets_max_scan_except_a_stream() {
+    let run: mock::RunHandler =
+        Arc::new(|_sql, _sink| Box::pin(async { Ok(StatementEnd::default()) }));
+    let fake = Arc::new(Fake::new(Dialect::Kafka, run));
+    let settings = Settings {
+        max_scan: 40,
+        ..Settings::default()
+    };
+    let (mut manager, mut events) = Manager::new(Arc::new(Budget::new(1 << 20))).unwrap();
+    let connection = manager.add_connection(fake.clone(), settings);
+    let console = manager.open_console(connection).unwrap();
+    let mut wait = |execution: u64| {
+        let mut scans = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(Instant::now() < deadline, "the run did not end");
+            match events.try_recv() {
+                Ok(ExecEvent::ScanAdded { scan, .. }) => scans.push(scan),
+                Ok(ExecEvent::ExecutionFinished {
+                    execution: ended, ..
+                }) if ended == execution => {
+                    return scans;
+                }
+                _ => std::thread::sleep(Duration::from_millis(1)),
+            }
+        }
+    };
+    let sql = vec!["SELECT * FROM orders".to_owned()];
+    let execution = manager.run(console, sql.clone(), RunOptions::default());
+    assert_eq!(wait(execution), [40]);
+    // A batch streams its rows and reads all messages, as it skips the row cap.
+    let stream = RunOptions {
+        stream: true,
+        ..RunOptions::default()
+    };
+    let execution = manager.run(console, sql, stream);
+    assert!(wait(execution).is_empty());
+    assert_eq!(
+        fake.statements(),
+        ["SELECT * FROM orders SCAN 40", "SELECT * FROM orders"]
+    );
+}

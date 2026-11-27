@@ -171,6 +171,7 @@ fn the_commands_of_redis_with_a_secret_stay_out() {
         "HELLO 3 AUTH user secret",
         "CONFIG SET requirepass secret",
         "CONFIG SET masterauth secret",
+        "MIGRATE 127.0.0.1 6379 \"\" 0 5000 AUTH secret KEYS a",
     ] {
         assert!(is_secret(sql, Dialect::Redis), "{sql}");
     }

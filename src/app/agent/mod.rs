@@ -373,8 +373,8 @@ struct Job {
     statements: Vec<Value>,
     /// The notices of the statement that runs, until its end takes them.
     notices: Vec<String>,
-    /// True when SQLN added a `SCAN` to a read that had no bound.
-    default_scan: bool,
+    /// The `SCAN` that SQLN added to a read that had none.
+    default_scan: Option<u64>,
     /// The rows of each result in the reply.
     rows: usize,
     serial: u64,
@@ -421,8 +421,8 @@ struct Proposal {
 }
 enum Work {
     /// Holds the statements when the draft held one raw text, or when SQLN added a bound
-    /// to a read, and true for an added bound.
-    Validated(String, Result<(Option<Vec<String>>, bool), Error>),
+    /// to a read, and the `SCAN` of an added bound.
+    Validated(String, Result<(Option<Vec<String>>, Option<u64>), Error>),
     Diff(
         String,
         Result<(Vec<crate::editor::review::Hunk>, agent::Hold), Error>,
@@ -822,7 +822,7 @@ impl App {
             "message": job.message,
             "tab_ids": job.consoles.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "statements": job.statements,
-            "default_scan": job.default_scan.then_some(crate::connector::kafka::command::AGENT_SCAN),
+            "default_scan": job.default_scan,
             "results": results,
             "artifact": artifact,
             "artifact_format": if matches!(job.output, Output::Catalog(..) | Output::Diagram(_) | Output::Fields(_)) { "json" } else { "text" },

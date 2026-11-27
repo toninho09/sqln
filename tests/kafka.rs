@@ -156,25 +156,77 @@ fn the_form_saves_the_consumer_group_in_both_entry_modes() {
 }
 
 #[test]
-fn the_consumer_group_field_shows_in_the_smallest_screen() {
+fn the_form_saves_the_max_scan_of_the_connection() {
+    let form = kafka_form();
+    assert!(form.fields().contains(&Field::MaxScan));
+    let definition = form.definition().unwrap();
+    let base = Settings {
+        max_scan: 300,
+        ..Settings::default()
+    };
+    assert_eq!(
+        definition.settings(&base).max_scan,
+        300,
+        "empty keeps the settings"
+    );
+    assert!(
+        !serde_json::to_string(&to_entry("k1", &definition))
+            .unwrap()
+            .contains("maxScan")
+    );
+
     let mut form = kafka_form();
-    form.focus_on(Field::ConsumerGroup);
-    form.on_paste("team-a.reader");
-    form.select_section(Field::ConsumerGroup.group());
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal
-        .draw(|frame| {
-            sqln::ui::form::draw_form(frame, &form, &Theme::plain());
-        })
-        .unwrap();
-    let buffer = terminal.backend().buffer();
-    let shown: String = buffer
-        .content
-        .chunks(usize::from(buffer.area.width))
-        .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>() + "\n")
-        .collect();
-    assert!(shown.contains("Consumer group"), "{shown}");
-    assert!(shown.contains("team-a.reader"), "{shown}");
+    form.focus_on(Field::MaxScan);
+    form.on_paste("5000");
+    let definition = form.definition().unwrap();
+    assert_eq!(
+        definition.settings(&base).max_scan,
+        5000,
+        "the connection wins"
+    );
+    let edited = ConnectionForm::editing(1, &definition, false);
+    assert_eq!(edited.definition().unwrap(), definition);
+    let entry = to_entry("k1", &definition);
+    let json = serde_json::to_string(&entry).unwrap();
+    assert!(json.contains(r#""maxScan":5000"#), "{json}");
+    let mut read = to_definition(&entry, "/base".into());
+    read.base = None;
+    assert_eq!(read, definition.without_password());
+
+    for text in ["0", "many"] {
+        let mut form = kafka_form();
+        form.focus_on(Field::MaxScan);
+        form.on_paste(text);
+        assert_eq!(form.definition().unwrap_err().field, Field::MaxScan);
+    }
+}
+
+#[test]
+fn the_consumer_group_and_max_scan_fields_show_in_the_smallest_screen() {
+    for (field, label, value) in [
+        (Field::ConsumerGroup, "Consumer group", "team-a.reader"),
+        (Field::MaxScan, "Max scan", "5000"),
+    ] {
+        let mut form = kafka_form();
+        form.focus_on(field);
+        form.on_paste(value);
+        form.select_section(field.group());
+        form.focus_on(field);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                sqln::ui::form::draw_form(frame, &form, &Theme::plain());
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let shown: String = buffer
+            .content
+            .chunks(usize::from(buffer.area.width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>() + "\n")
+            .collect();
+        assert!(shown.contains(label), "{shown}");
+        assert!(shown.contains(value), "{shown}");
+    }
 }
 
 #[test]
@@ -354,6 +406,14 @@ fn the_settings_refuse_kafka_fields_on_other_engines() {
         r#"{"version":1,"connections":[{"id":"k","name":"k","kind":"kafka","host":"h","consumerGroup":"a b"}]}"#,
     );
     assert!(message.contains("consumerGroup"), "{message}");
+    let message = refused(
+        r#"{"version":1,"connections":[{"id":"r","name":"r","kind":"redis","host":"h","maxScan":10}]}"#,
+    );
+    assert!(message.contains("only for kafka"), "{message}");
+    let message = refused(
+        r#"{"version":1,"connections":[{"id":"k","name":"k","kind":"kafka","host":"h","maxScan":0}]}"#,
+    );
+    assert!(message.contains("maxScan"), "{message}");
 }
 
 #[test]

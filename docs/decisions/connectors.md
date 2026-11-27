@@ -15,7 +15,7 @@ The user asked that a failure caused by a configuration tells how to correct it.
 | Read only | The runner keeps `ReadOnly` only when the `Read only` setting of the connection is on. Without the setting, the hint names the server, the file, or the transaction. The read policy of an agent gives no hint | One hint for each refusal | The user changes only the setting of the connection |
 | Explicit TLS | A refusal of an explicit TLS mode asks for the other mode. A fix of the driver stays, such as `ServerRule` for `28000` | Always the TLS hint | `28000` is also a rule of the user or of the host |
 | Host names | After a connection failure without a fix, `AutoTls` resolves a host name once. A failed resolution gives `Host` | A text match of the DNS error | `io::ErrorKind` has no stable kind for a DNS failure |
-| Refused port | After a refusal, `AutoTls` tries each address of the host. `Port` stays only when each address refuses | Trust the refusal of the driver | A driver reports the error of one address only, such as `::1` of `localhost`, and hides the error of another address |
+| Refused port | After a refusal, `AutoTls` tries each address of the host. `Port` stays only when each address refuses. A refused Unix socket has no port, so it gets no hint | Trust the refusal of the driver | A driver reports the error of one address only, such as `::1` of `localhost`, and hides the error of another address |
 | MCP | `statements[].fix` and the `fix` of a task hold the hint text. The IPC version stays 3 | A new IPC version | IPC 3 is not released, and the field is optional in the reply |
 | Place | `Fix` and `Failure` are in `sqln-core`, with the hint texts. `sqln-session` exports them in `connector` | `sqln-session` | They need no other crate |
 | Databricks | No hint. Its texts already name the action | A hint for each code | The texts already give the next action |
@@ -334,6 +334,8 @@ These choices follow the rules above on the points the rules left open.
 | Selector with an open transaction | Refuse the change | Change with `SET` or `USE` | A reserved session does not receive the context, and a transaction with an error refuses `SET` |
 | Disconnect with open work | Refuse and name the console | Ask and stop the console | Fewer states; the user resolves the transaction with the existing controls |
 | Disconnect with a catalog read | Wait for the session for up to 5 seconds | Report the end right after closing the idle ones | The message would be false, and the form stayed stuck in the rename mode |
+| Time of a catalog or column read | The statement time limit of the connection applies, as it applies to the metadata reads of the agent. At the limit the session closes | No limit | A read that waits for a lock held the place of the pool, and other consoles waited without a limit |
+| Connection change during an execution | The console keeps the change and uses it from its next command | Drop the change | The console kept the old settings, such as a connection without `Read only` |
 | Removed connection | The console stays open, without a connection | Close the consoles | The text is not lost, as in the scripts without connection |
 
 ## DuckDB — 2026-11-07

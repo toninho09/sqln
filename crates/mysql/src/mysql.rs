@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use mysql_async::consts::{ColumnType, StatusFlags};
+use mysql_async::consts::{ColumnFlags, ColumnType, StatusFlags};
 use mysql_async::prelude::Queryable;
 use mysql_async::{ClientIdentity, Column, Conn, Error as DriverError, Opts, OptsBuilder, SslOpts};
 use tokio::time::timeout;
@@ -259,7 +259,11 @@ impl Canceller for MySqlCanceller {
 fn column_type(column: &Column) -> String {
     use ColumnType::*;
     let binary = column.character_set() == BINARY_CHARSET;
+    // The server sends an ENUM or SET column as a string column with a flag.
+    let flags = column.flags();
     let name = match column.column_type() {
+        _ if flags.contains(ColumnFlags::ENUM_FLAG) => "enum",
+        _ if flags.contains(ColumnFlags::SET_FLAG) => "set",
         MYSQL_TYPE_TINY => "tinyint",
         MYSQL_TYPE_SHORT => "smallint",
         MYSQL_TYPE_INT24 => "mediumint",
@@ -293,11 +297,7 @@ fn column_type(column: &Column) -> String {
         }
         _ => "unknown",
     };
-    if is_number(column)
-        && column
-            .flags()
-            .contains(mysql_async::consts::ColumnFlags::UNSIGNED_FLAG)
-    {
+    if is_number(column) && flags.contains(ColumnFlags::UNSIGNED_FLAG) {
         format!("{name} unsigned")
     } else {
         name.to_owned()

@@ -82,6 +82,8 @@ pub struct ConsoleTask {
     trace: Option<TraceContext>,
     cancellation: tokio_util::sync::CancellationToken,
     stream_stopped: Option<Arc<StreamControl>>,
+    /// A new binding that arrived during an execution. It acts from the next command.
+    rebind: Option<Binding>,
 }
 
 impl ConsoleTask {
@@ -104,11 +106,15 @@ impl ConsoleTask {
             transaction: TransactionState::None,
             trace: None,
             cancellation: tokio_util::sync::CancellationToken::new(),
+            rebind: None,
         }
     }
 
     pub async fn serve(mut self, mut commands: UnboundedReceiver<Command>) {
         while let Some(command) = commands.recv().await {
+            if let Some(binding) = self.rebind.take() {
+                self.binding = binding;
+            }
             self.settings = self.binding.settings().clone();
             self.cancellation = tokio_util::sync::CancellationToken::new();
             match command {
@@ -271,7 +277,8 @@ impl ConsoleTask {
         // The state of a closed session does not apply to the next session.
         let reserved = self.held.is_some();
         if !reserved {
-            self.transaction = TransactionState::None;
+            // The interface leaves an unknown state only after an event.
+            self.set_transaction(TransactionState::None).await;
         }
         let Some(mut lease) = self.acquire(execution, commands).await else {
             return;
@@ -301,13 +308,17 @@ impl ConsoleTask {
 
         let mut end = ExecutionEnd::Completed;
         let mut lease = Some(lease);
+        // A stop arrives once, so it stays for the remaining statements, also after an
+        // error that `continue_on_error` passes.
+        let mut stopped = false;
         for (index, sql) in statements.iter().enumerate() {
             let key = StatementKey {
                 console,
                 execution,
                 index,
             };
-            let stop_requested = self.stop_is_pending(commands).await;
+            stopped = stopped || self.stop_is_pending(commands).await;
+            let stop_requested = stopped;
             let Some(active) = lease.as_mut().filter(|_| {
                 !stop_requested
                     && (end == ExecutionEnd::Completed
@@ -460,7 +471,9 @@ impl ConsoleTask {
                 })
                 .await;
             }
-            Command::Stop | Command::ConfirmClose(_) | Command::Rebind(_) | Command::Close => {}
+            // The execution keeps the pool and the dialect that it started with.
+            Command::Rebind(binding) => self.rebind = Some(binding),
+            Command::Stop | Command::ConfirmClose(_) | Command::Close => {}
         }
     }
 
@@ -532,6 +545,12 @@ impl ConsoleTask {
             && cap < usize::MAX)
             .then(|| with_row_limit(sql, self.binding.pool.dialect(), rows))
             .flatten();
+        // A Kafka read without `SCAN` would examine the whole topic. An export and a batch
+        // read everything on purpose, as they also skip the row cap.
+        let scan = self.settings.max_scan;
+        let scanned = (!stream && capture.is_none() && export.is_none() && !live)
+            .then(|| crate::dialect::features(self.binding.pool.dialect()).default_bound(sql, scan))
+            .flatten();
         if let Some(capture) = capture {
             sink.capture_to(capture);
         }
@@ -541,9 +560,12 @@ impl ConsoleTask {
         if limited.is_some() {
             self.emit(ExecEvent::LimitAdded { key, rows }).await;
         }
+        if scanned.is_some() {
+            self.emit(ExecEvent::ScanAdded { key, scan }).await;
+        }
         // An error in the added clause points to the end of the text of the user.
         let user_end = sql.len();
-        let sql = limited.as_deref().unwrap_or(sql);
+        let sql = limited.as_deref().or(scanned.as_deref()).unwrap_or(sql);
         let bound = if parameters.is_empty() {
             None
         } else {

@@ -168,7 +168,7 @@ States include `validating`, `ready`, `waiting_confirmation`, `waiting_credentia
   The pages share half of the response limit. A result without space has `rows_omitted: true`; read it with `read_result`.
   A Kafka result also has `read`: `scanned`, `matched`, and `end` (`end` of the topic, `limit`, `scan`, `stopped`, or `grid` when the grid stopped it). After `scan` with no match, `next_action` says that the rest of the topic was not read.
 - `fix` holds the same `Hint:` line for the failure of the task, such as a connection that does not open. A task without such a cause has no `fix`.
-- `default_scan` holds the `SCAN` that SQLN added to a Kafka read without a bound. See [Consoles and queries](#consoles-and-queries).
+- `default_scan` holds the `SCAN` that SQLN added to a Kafka read without its own `SCAN`. See [Consoles and queries](#consoles-and-queries).
 - `artifact` holds the first page of a text artifact, such as DDL, a catalog, a diagram, or a sync script. `job` with `artifact_offset` reads the next page.
 
 The bridge does not retain more than 64 tasks per session. It evicts completed tasks first.
@@ -179,7 +179,7 @@ The agent writes SQL in the dialect of the connection: `get_context` gives the `
 A Kafka connection does not accept standard SQL. When `get_context` lists a Kafka connection, the first reply of the session holds `syntax.Kafka`: the Kafka syntax guide in `crates/session/src/connector/kafka/guide.md`, the same text that the AI completion sends.
 Later replies hold a short note in `syntax.Kafka`. `get_context` with `include_syntax: true` sends the guide again, for example after the client shortened its context.
 The server instructions tell the agent to follow that guide, to bind each Kafka read with `LIMIT`, `SCAN`, or `START AT`, and to call `describe` before it writes SQL.
-A Kafka read of `query` or `run_console` without `LIMIT`, `SCAN`, or `START AT` (`FROM` for `CONSUME`) gets `SCAN 100000` at its end, at each access level. The reply holds `default_scan`, and the agent Messages say that SQLN added it.
+A Kafka read of `query` or `run_console` without its own `SCAN` gets `SCAN 100000` at its end, at each access level. `LIMIT` counts only the matches, and `START AT` (`FROM` for `CONSUME`) does not end the read, so these reads get the `SCAN` too. **Kafka max scan** in Settings and the **Max scan** field of the connection change the number. See [Kafka](KAFKA.md). The reply holds `default_scan`, and the agent Messages say that SQLN added it.
 When `describe` gives a topic no fields, the reply tells the agent to read a few messages with `LIMIT 5` to learn the paths.
 
 `query` uses the session's agent console for that connection.
@@ -326,8 +326,8 @@ The MCP does not offer the SQL templates of the interface. The agent writes SQL 
 - `get_context` lists up to 200 connections from `connection_offset`, and returns `connections_next_offset`. Tabs accept `offset` and `limit`, and return `next_offset`.
 - Result pages default to 100 rows and accept up to 1,000 rows.
 - Responses have a 256 KiB ceiling. Large cells return `needs_cell_read`; read them with `read_result`, `row`, and `column`.
-- The MCP result holds each reply twice, as structured content and as text. When a reply does not fit, the bridge removes the rows of the last result pages, then half of the first page's rows, then the artifact page.
-  The reply keeps `job_id` and `status`, and `shortened` says what to read again: `rows_omitted`, `next_offset`, or `artifact_omitted`. A task that ran never returns `response_too_large`.
+- The MCP result holds each reply twice, as structured content and as text. When a reply does not fit, the bridge removes the rows of the last result pages, then half of the first page's rows, then the artifact page, then the notices of each statement from the last.
+  The reply keeps `job_id` and `status`. `shortened` holds a sentence that says what to read again. The shortened parts carry `rows_omitted`, `next_offset`, `artifact_omitted`, or `notices_omitted`. Omitted notices stay in the Messages of the console that ran the statement. A task that ran never returns `response_too_large`.
 - Text and cell blocks contain at most 16 KiB before JSON encoding. Follow `next_offset`.
 - Text offsets count UTF-8 bytes. Follow returned offsets to stay on character boundaries.
 - Later `read_console` pages require the revision from the first page.

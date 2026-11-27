@@ -85,6 +85,7 @@ fn label(kind: Kind, field: Field) -> &'static str {
         Field::RegistryPassword => text::FIELD_REGISTRY_PASSWORD,
         Field::ConsumerGroup => text::FIELD_CONSUMER_GROUP,
         Field::Topics => text::FIELD_TOPICS,
+        Field::MaxScan => text::FIELD_MAX_SCAN,
         Field::Warehouse => text::FIELD_WAREHOUSE,
         Field::File => text::FIELD_FILE,
         Field::ForeignKeys => text::FIELD_FOREIGN_KEYS,

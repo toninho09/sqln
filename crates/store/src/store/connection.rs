@@ -149,8 +149,13 @@ impl Definition {
             Source::Duckdb(target) => target.is_memory(),
             Source::Network(_) => false,
         };
+        let max_scan = match &self.source {
+            Source::Network(target) => target.kafka.max_scan,
+            _ => None,
+        };
         Settings {
             read_only: self.read_only || base.read_only,
+            max_scan: max_scan.unwrap_or(base.max_scan),
             max_connections: if memory { 1 } else { self.max_connections },
             connect_timeout: self.connect_timeout,
             sql_timeout: self.sql_timeout,
@@ -264,6 +269,8 @@ pub struct Settings {
     pub read_only: bool,
     /// True adds `LIMIT` with the row cap to a plain read without its own limit.
     pub cap_in_sql: bool,
+    /// The `SCAN` that a Kafka read without its own `SCAN` gets.
+    pub max_scan: u64,
 }
 
 impl Default for Settings {
@@ -279,6 +286,7 @@ impl Default for Settings {
             budget_bytes: DEFAULT_LIMIT,
             read_only: false,
             cap_in_sql: DEFAULT_CAP_IN_SQL,
+            max_scan: crate::connector::kafka::command::DEFAULT_SCAN,
         }
     }
 }

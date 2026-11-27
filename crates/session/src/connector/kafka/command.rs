@@ -208,8 +208,6 @@ pub struct Read {
     pub scan: Option<u64>,
     /// `None` keeps all message columns.
     pub projection: Option<Projection>,
-    /// True when the statement names its start, with `START AT` or `FROM`.
-    pub start_given: bool,
 }
 
 #[derive(Debug)]
@@ -349,7 +347,6 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read,
         limit: None,
         scan: None,
         projection: None,
-        start_given: false,
     };
     let mut seen: Vec<String> = Vec::new();
     while let Some(token) = cursor.advance() {
@@ -386,14 +383,8 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read,
                 }
                 read.partition = Some(partition);
             }
-            "FROM" => {
-                read.start = parse_start(cursor)?;
-                read.start_given = true;
-            }
-            "START" => {
-                read.start = select::parse_start(cursor)?;
-                read.start_given = true;
-            }
+            "FROM" => read.start = parse_start(cursor)?,
+            "START" => read.start = select::parse_start(cursor)?,
             "WHERE" => read.filter = Some(filter::parse(cursor)?),
             "LIMIT" => {
                 let (limit, offset) = cursor.number::<usize>(text::KAFKA_WHAT_COUNT)?;
@@ -414,17 +405,19 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read,
     Ok(read)
 }
 
-/// The most messages that an agent read examines when it names no bound.
-pub const AGENT_SCAN: u64 = 100_000;
+/// The most messages that a read without its own `SCAN` examines, when the settings and
+/// the connection set no other number.
+pub const DEFAULT_SCAN: u64 = 100_000;
 
-/// Returns the read with `SCAN scan` at its end when it has no `LIMIT`, `SCAN`, or start,
-/// so it cannot examine the whole topic. Other statements, a continuous read, and a read
-/// that already has a bound return `None`. The result always parses again.
+/// Returns the read with `SCAN scan` at its end when it has no `SCAN`, so it cannot
+/// examine the whole topic. `LIMIT` counts only the matches, and a start does not end
+/// the read, so they get the `SCAN` too. Other statements, a continuous read, and a read
+/// with its own `SCAN` return `None`. The result always parses again.
 pub fn bounded_read(line: &str, scan: u64) -> Option<String> {
     let Ok(Command::Consume(read)) = parse(line) else {
         return None;
     };
-    if read.limit.is_some() || read.scan.is_some() || read.start_given {
+    if read.scan.is_some() {
         return None;
     }
     let body = line.trim_end();
@@ -522,14 +515,24 @@ mod tests {
                 "CONSUME orders WHERE key = 'a'",
                 "CONSUME orders WHERE key = 'a' SCAN 7",
             ),
+            // LIMIT counts only the matches, and a start does not end the read.
+            (
+                "SELECT * FROM orders LIMIT 5",
+                "SELECT * FROM orders LIMIT 5 SCAN 7",
+            ),
+            (
+                "SELECT * FROM orders START AT EARLIEST",
+                "SELECT * FROM orders START AT EARLIEST SCAN 7",
+            ),
+            (
+                "CONSUME orders FROM latest",
+                "CONSUME orders FROM latest SCAN 7",
+            ),
         ] {
             assert_eq!(bounded_read(line, 7).as_deref(), Some(bounded), "{line}");
         }
         for line in [
-            "SELECT * FROM orders LIMIT 5",
             "SELECT * FROM orders SCAN 50",
-            "SELECT * FROM orders START AT EARLIEST",
-            "CONSUME orders FROM latest",
             "SELECT * FROM orders EMIT CHANGES",
             "TAIL orders",
             "TOPICS",

@@ -348,6 +348,28 @@ async fn a_call_without_instance_id_stays_on_its_instance_and_large_replies_keep
     assert_eq!(results[0]["rows"].as_array().unwrap().len(), 195);
     assert_eq!(results[0]["next_offset"], 195);
     assert_eq!(done["artifact"], "text");
+    // A script with many notices loses the notices of its last statements, not the task.
+    let statements: Vec<_> = (0..100)
+        .map(|index| json!({"index": index, "status": "success", "notices": ["n".repeat(2000)]}))
+        .collect();
+    let script = json!({"job_id":"s","kind":"Query","status":"completed",
+        "results":[],"statements":statements});
+    assert!(serde_json::to_vec(&script).unwrap().len() < agent::PAGE_BYTES);
+    let (done, _) = call(
+        &client,
+        "query",
+        json!({"connection_id":"1","sql":"SELECT 1"}),
+        &first,
+        None,
+        |_| Ok(script.clone()),
+    )
+    .await;
+    assert_eq!(done["status"], "completed", "{done}");
+    assert!(done["shortened"].is_string());
+    let statements = done["statements"].as_array().unwrap();
+    assert_eq!(statements.len(), 100);
+    assert!(statements[0]["notices"].is_array(), "{done}");
+    assert_eq!(statements[99]["notices_omitted"], true, "{done}");
     // The instance closes and another opens: a call without instance_id does not move.
     drop(first);
     let second = agent::ipc::Server::at(dir.clone(), None).unwrap();

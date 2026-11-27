@@ -830,6 +830,25 @@ fn removing_a_pending_insert_row_runs_no_statement() {
 }
 
 #[test]
+fn discarding_a_new_row_keeps_the_cursor_on_a_loaded_row() {
+    let mut f = Fixture::new("edit-insert-discard", KeyboardMode::Conventional);
+    f.open("items");
+    f.press(KeyCode::Char('n'));
+    f.idle();
+    assert_eq!(f.app.table().unwrap().result.view.row, 2);
+    f.app.on_event(Event::Key(ctrl('d')));
+    f.press(KeyCode::Tab);
+    f.press(KeyCode::Enter);
+    let tab = f.app.table().unwrap();
+    assert!(tab.result.edits.is_empty());
+    assert_eq!(tab.result.table.rows.len(), 2);
+    assert_eq!(tab.result.view.row, 1);
+    // A copy of the cursor cell reads a loaded row.
+    f.app.on_event(Event::Key(ctrl('c')));
+    f.screen(80, 24);
+}
+
+#[test]
 fn editing_a_cell_of_a_deleted_row_refuses_and_shows_the_reason() {
     let mut f = Fixture::new("edit-deleted-refusal", KeyboardMode::Conventional);
     f.open("items");

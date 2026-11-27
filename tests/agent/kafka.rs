@@ -225,6 +225,12 @@ fn the_context_names_production_and_read_only() {
 /// A Kafka source that records each statement. A read with `SCAN` ends at its scan with
 /// no match, as a read of a topic whose messages are past the scan.
 fn recording_harness() -> (Harness, Arc<std::sync::Mutex<Vec<String>>>) {
+    recording_harness_with(sqln::exec::Settings::default())
+}
+
+fn recording_harness_with(
+    settings: sqln::exec::Settings,
+) -> (Harness, Arc<std::sync::Mutex<Vec<String>>>) {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let record = seen.clone();
     let handler: RunHandler = Arc::new(move |sql: String, mut sink| {
@@ -251,11 +257,74 @@ fn recording_harness() -> (Harness, Arc<std::sync::Mutex<Vec<String>>>) {
     let h = Harness::options(
         Options {
             connector: Some(Arc::new(MockConnector::new(Dialect::Kafka, handler))),
+            settings,
             ..Default::default()
         },
         KeyboardMode::Conventional,
     );
     (h, seen)
+}
+
+/// Runs the text of the user console and waits for its end.
+fn run_user(h: &mut Harness, sql: &str) {
+    h.app.on_event(crossterm::event::Event::Paste(sql.into()));
+    h.key(crossterm::event::KeyCode::F(5));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while h.app.console().is_busy() || h.app.console().results.is_empty() {
+        h.app.drain_events();
+        assert!(std::time::Instant::now() < deadline, "the run did not end");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn max_scan_of_the_settings_bounds_user_and_agent_reads() {
+    let settings = sqln::exec::Settings {
+        max_scan: 500,
+        ..sqln::exec::Settings::default()
+    };
+    let (mut h, seen) = recording_harness_with(settings);
+    // A user read without SCAN gets Max scan, and Messages says so.
+    run_user(&mut h, "SELECT * FROM orders");
+    assert_eq!(
+        seen.lock().unwrap().last().unwrap(),
+        "SELECT * FROM orders SCAN 500"
+    );
+    let added = h
+        .app
+        .console()
+        .messages
+        .iter()
+        .filter(|message| message.text.contains("SQLN added SCAN 500"))
+        .count();
+    assert_eq!(added, 1, "{:?}", h.app.console().messages);
+    // The agent gets the same number.
+    h.authorize();
+    let reply = run(&mut h, "SELECT * FROM orders LIMIT 5");
+    assert_eq!(reply["default_scan"], 500, "{reply}");
+    assert_eq!(
+        seen.lock().unwrap().last().unwrap(),
+        "SELECT * FROM orders LIMIT 5 SCAN 500"
+    );
+}
+
+#[test]
+fn a_user_read_with_its_own_scan_keeps_its_text() {
+    let (mut h, seen) = recording_harness();
+    run_user(&mut h, "SELECT * FROM orders SCAN 7");
+    assert_eq!(
+        seen.lock().unwrap().last().unwrap(),
+        "SELECT * FROM orders SCAN 7"
+    );
+    assert!(
+        !h.app
+            .console()
+            .messages
+            .iter()
+            .any(|message| message.text.contains("SQLN added SCAN")),
+        "{:?}",
+        h.app.console().messages
+    );
 }
 
 #[test]
@@ -266,7 +335,7 @@ fn an_agent_read_without_a_bound_gets_the_default_scan_and_says_how_it_ended() {
     assert_eq!(reply["status"], "completed", "{reply}");
     assert_eq!(
         reply["default_scan"],
-        sqln::connector::kafka::command::AGENT_SCAN,
+        sqln::connector::kafka::command::DEFAULT_SCAN,
         "{reply}"
     );
     let ran = seen.lock().unwrap().last().unwrap().clone();
@@ -281,15 +350,23 @@ fn an_agent_read_without_a_bound_gets_the_default_scan_and_says_how_it_ended() {
             .contains("raise SCAN"),
         "{reply}"
     );
-    // A read with its own bound keeps its text.
-    let reply = run(&mut h, "SELECT * FROM orders LIMIT 5");
+    // LIMIT counts only the matches, and a start does not end the read: both get the SCAN.
+    for sql in [
+        "SELECT * FROM orders LIMIT 5",
+        "SELECT * FROM orders START AT EARLIEST",
+    ] {
+        let reply = run(&mut h, sql);
+        assert_eq!(reply["default_scan"], 100_000, "{reply}");
+        let ran = seen.lock().unwrap().last().unwrap().clone();
+        assert_eq!(ran, format!("{sql} SCAN 100000"));
+    }
+    // A read with its own SCAN keeps its text.
+    let reply = run(&mut h, "SELECT * FROM orders SCAN 50");
     assert!(reply["default_scan"].is_null(), "{reply}");
     assert_eq!(
         seen.lock().unwrap().last().unwrap(),
-        "SELECT * FROM orders LIMIT 5"
+        "SELECT * FROM orders SCAN 50"
     );
-    assert_eq!(reply["results"][0]["read"]["end"], "limit", "{reply}");
-    assert!(reply.get("next_action").is_none(), "{reply}");
 }
 
 #[test]

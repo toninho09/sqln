@@ -285,7 +285,10 @@ impl GridView {
     }
 
     pub fn move_to(&mut self, row: usize, col: usize, table: &ResultTable, extend: bool) {
+        // A table without rows keeps no cursor row and no selection.
         if table.rows.is_empty() {
+            self.row = 0;
+            self.anchor = None;
             return;
         }
         if extend {
@@ -331,7 +334,13 @@ impl GridView {
             return None;
         }
         let range = self.target();
-        Some(table.tsv(range.top, range.bottom, range.left, range.right))
+        let last = table.rows.len() - 1;
+        Some(table.tsv(
+            range.top.min(last),
+            range.bottom.min(last),
+            range.left,
+            range.right,
+        ))
     }
 
     /// Moves the scroll position so that the cursor stays visible.

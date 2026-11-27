@@ -2461,6 +2461,28 @@ fn the_settings_write_nothing_before_the_save() {
 }
 
 #[test]
+fn the_settings_save_the_kafka_max_scan() {
+    let (store, _) = two_connections("p-settings-max-scan");
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    // Row cap, Limit in SQL, and Kafka max scan.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    session.assert_sees("Kafka max scan");
+    session.write("250");
+    // Data, Format JSON, System commands, and Save.
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(project.config_file()).unwrap();
+    assert!(text.contains("\"maxScan\": 250"), "{text}");
+}
+
+#[test]
 fn the_settings_write_only_the_scope_of_the_dialog() {
     let (store, _) = two_connections("p-settings-save");
     let global = fs::read_to_string(store.global.config_file()).unwrap();
@@ -2468,7 +2490,7 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2481,6 +2503,26 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     );
     // The connections and the other parts of the file stay.
     assert!(text.contains("third"), "{text}");
+}
+
+#[test]
+fn a_settings_save_after_an_outside_change_keeps_the_change_and_says_why() {
+    let (store, _) = two_connections("p-settings-outside");
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    session.write("77");
+    // Another program changes the file while the window is open.
+    let (mut preferences, known) = config::preferences_and_hash(&project, Scope::Project).unwrap();
+    preferences.show_system_commands = Some(true);
+    config::change_preferences(&project, Scope::Project, preferences, known).unwrap();
+    let outside = fs::read_to_string(project.config_file()).unwrap();
+    for _ in 0..7 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("Another program changed");
+    assert_eq!(fs::read_to_string(project.config_file()).unwrap(), outside);
 }
 
 #[test]
@@ -2503,7 +2545,7 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2518,7 +2560,7 @@ fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -3208,9 +3250,10 @@ fn shortcut_save_checks_changes_in_the_other_scope_before_writing() {
     session.click_text("[Record]");
     session.code(KeyCode::F(8));
     session.code(KeyCode::Enter);
-    let mut preferences = config::preferences(&store.global, Scope::Global).unwrap();
+    let (mut preferences, known) =
+        config::preferences_and_hash(&store.global, Scope::Global).unwrap();
     preferences.keymap = Some(serde_json::from_str(r#"{"conventional":{"quit":["f8"]}}"#).unwrap());
-    config::change_preferences(&store.global, Scope::Global, preferences).unwrap();
+    config::change_preferences(&store.global, Scope::Global, preferences, known).unwrap();
     session.click_text("[Save]");
     session.assert_sees("conflicts");
     session.assert_sees("SHORTCUTS");
@@ -3711,9 +3754,10 @@ fn a_save_writes_the_changes_of_all_sections() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    // Back to the sidebar: Row cap, Limit in SQL, Data, Format JSON, System commands,
+    // Back to the sidebar: Row cap, Limit in SQL, Kafka max scan, Data, Format JSON,
+    // System commands,
     // Save, Cancel, and the sidebar.
-    for _ in 0..8 {
+    for _ in 0..9 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Up);
@@ -3737,7 +3781,7 @@ fn a_bad_value_of_a_closed_section_shows_the_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..8 {
+    for _ in 0..9 {
         session.code(KeyCode::Tab);
     }
     // The sidebar opens the first section. Then the focus goes to Save.
@@ -3796,7 +3840,8 @@ fn system_commands_start_off_and_follow_the_preference_scope() {
     assert!(shown(&store));
     write_config(&project, r#"{"showSystemCommands":false}"#, &[]);
     assert!(!shown(&store));
-    config::change_preferences(&project, Scope::Project, Preferences::default()).unwrap();
+    let (_, known) = config::preferences_and_hash(&project, Scope::Project).unwrap();
+    config::change_preferences(&project, Scope::Project, Preferences::default(), known).unwrap();
     assert!(shown(&store));
 }
 
@@ -3862,9 +3907,9 @@ fn system_command_settings_show_and_hide_existing_records_without_removing_them(
 fn saved_system_command_visibility_applies_when_the_application_starts() {
     let (store, _) = two_connections("p-system-command-start");
     let project = store.project.as_ref().unwrap();
-    let mut preferences = config::preferences(project, Scope::Project).unwrap();
+    let (mut preferences, known) = config::preferences_and_hash(project, Scope::Project).unwrap();
     preferences.show_system_commands = Some(true);
-    config::change_preferences(project, Scope::Project, preferences).unwrap();
+    config::change_preferences(project, Scope::Project, preferences, known).unwrap();
     let mut session = Session::start(&store);
     session
         .app
@@ -4000,7 +4045,7 @@ fn a_saved_row_cap_and_limit_in_sql_reach_a_console_that_already_ran() {
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
     // Data, Format JSON, System commands, and Save.
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -4035,7 +4080,7 @@ fn a_save_of_the_limit_in_sql_writes_the_file() {
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
     // Data, Format JSON, System commands, and Save.
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);

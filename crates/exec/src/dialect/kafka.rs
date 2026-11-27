@@ -94,11 +94,8 @@ impl Features for Kafka {
         None
     }
 
-    fn agent_bound(&self, sql: &str) -> Option<String> {
-        crate::connector::kafka::command::bounded_read(
-            sql,
-            crate::connector::kafka::command::AGENT_SCAN,
-        )
+    fn default_bound(&self, sql: &str, scan: u64) -> Option<String> {
+        crate::connector::kafka::command::bounded_read(sql, scan)
     }
 
     fn agent_name(&self) -> &'static str {

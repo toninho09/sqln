@@ -57,6 +57,8 @@ pub enum Field {
     ConsumerGroup,
     /// The patterns of the topics that the Kafka catalog shows.
     Topics,
+    /// The most messages that an agent read of Kafka examines without its own `SCAN`.
+    MaxScan,
     /// The SQL warehouse id of a Databricks connection.
     Warehouse,
     File,
@@ -420,6 +422,9 @@ impl ConnectionForm {
             self.set(Field::ConsumerGroup, group.clone());
         }
         self.set(Field::Topics, target.kafka.topics.join(", "));
+        if let Some(scan) = target.kafka.max_scan {
+            self.set(Field::MaxScan, scan.to_string());
+        }
         match &target.address {
             Address::Tcp { host, port } => {
                 self.set(Field::Host, host.clone());
@@ -532,7 +537,7 @@ impl ConnectionForm {
             fields.push(Field::Schemas);
         }
         if self.kind == Kind::Kafka {
-            fields.extend([Field::ConsumerGroup, Field::Topics]);
+            fields.extend([Field::ConsumerGroup, Field::Topics, Field::MaxScan]);
         }
         fields.push(Field::Pool);
         // SQLN only reads from Kafka, so the flag has no effect there.
@@ -1017,6 +1022,15 @@ impl ConnectionForm {
             .map_err(|message| invalid(Field::ConsumerGroup, message))?;
         let topics = topic_filter(self.trimmed(Field::Topics))
             .map_err(|message| invalid(Field::Topics, message))?;
+        let max_scan = match self.trimmed(Field::MaxScan) {
+            "" => None,
+            scan => Some(
+                scan.parse::<u64>()
+                    .ok()
+                    .filter(|scan| *scan > 0)
+                    .ok_or_else(|| invalid(Field::MaxScan, text::KAFKA_BAD_MAX_SCAN))?,
+            ),
+        };
         Ok(KafkaOptions {
             sasl: if self.use_uri { uri.sasl } else { self.sasl },
             registry,
@@ -1026,6 +1040,7 @@ impl ConnectionForm {
             } else {
                 topics
             },
+            max_scan,
         })
     }
 

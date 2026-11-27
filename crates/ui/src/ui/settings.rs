@@ -58,6 +58,7 @@ fn label(field: Field) -> &'static str {
         Field::Keyboard => text::FIELD_KEYBOARD,
         Field::PageSize => text::FIELD_PAGE_SIZE,
         Field::RowCap => text::FIELD_ROW_CAP,
+        Field::MaxScan => text::FIELD_SETTINGS_MAX_SCAN,
         Field::CapInSql => text::FIELD_CAP_IN_SQL,
         Field::Budget => text::FIELD_BUDGET,
         Field::ReopenTabs => text::FIELD_REOPEN_TABS,
