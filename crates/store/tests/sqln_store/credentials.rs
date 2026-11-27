@@ -93,6 +93,29 @@ fn changed_destinations() -> Vec<Definition> {
 }
 
 #[test]
+fn automatic_tls_keeps_the_identity_of_its_first_attempt() {
+    let key = ConnectionKey {
+        scope: Scope::Global,
+        id: ID.into(),
+    };
+    let account =
+        |definition: &Definition| Identity::of(&key, definition).unwrap().account().unwrap();
+    let mut remote = definition();
+    target(&mut remote).tls = Tls::Auto;
+    assert_eq!(account(&remote), account(&definition()));
+
+    let mut local = definition();
+    target(&mut local).address = Address::Tcp {
+        host: "localhost".into(),
+        port: 5432,
+    };
+    let mut plain = local.clone();
+    target(&mut local).tls = Tls::Auto;
+    target(&mut plain).tls = Tls::Disabled;
+    assert_eq!(account(&local), account(&plain));
+}
+
+#[test]
 fn passwords_clear_memory_and_hide_debug_text() {
     fn drops_with_zeroize<T: ZeroizeOnDrop>() {}
     drops_with_zeroize::<Secret>();

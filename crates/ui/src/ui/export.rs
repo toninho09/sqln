@@ -111,6 +111,7 @@ pub fn draw_export(frame: &mut Frame, form: &ExportForm, theme: &Theme) -> Expor
         titles: &names,
         open,
         focused: form.focus == Field::Formats,
+        headings: &[],
     })
     .open(frame, theme);
     let pane = modal.pane;

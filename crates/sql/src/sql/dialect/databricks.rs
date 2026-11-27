@@ -20,6 +20,7 @@ const SYNTAX: Syntax = Syntax {
     backslash_quote: true,
     booleans: ("TRUE", "FALSE"),
     dotted_schema: true,
+    file_names: true,
     folds_to_lower: true,
     ..BASE
 };

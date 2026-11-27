@@ -104,6 +104,8 @@ pub fn connection_icon_name(icon: crate::store::config::ConnectionIcon) -> &'sta
 /// One topic of the getting-started guide. The help shows the effective key of each step.
 /// An example is a text and a statement.
 pub struct GuideText {
+    /// The heading of the sidebar group of the topic.
+    pub group: &'static str,
     /// The short name in the sidebar.
     pub name: &'static str,
     pub title: &'static str,
@@ -112,8 +114,14 @@ pub struct GuideText {
     pub examples: &'static [(&'static str, &'static str)],
 }
 
+/// The sidebar groups of the guide topics.
+pub const GUIDE_START: &str = "Getting started";
+pub const GUIDE_FEATURES: &str = "Features";
+pub const GUIDE_AI: &str = "AI";
+
 pub const GUIDE: &[GuideText] = &[
     GuideText {
+        group: GUIDE_START,
         name: "Connect",
         title: "1. Connect to a database",
         intro: "A connection holds the address of a database: a URI, such as postgres://user@host/db, or the path of a SQLite file. A console is a SQL editor on one connection.",
@@ -132,6 +140,7 @@ pub const GUIDE: &[GuideText] = &[
         examples: &[],
     },
     GuideText {
+        group: GUIDE_START,
         name: "Run SQL",
         title: "2. Run SQL and read the results",
         intro: "Write SQL in the console. The results show below the editor. The interface stays active while a query runs, and you can stop the query.",
@@ -157,6 +166,7 @@ pub const GUIDE: &[GuideText] = &[
         examples: &[],
     },
     GuideText {
+        group: GUIDE_START,
         name: "Tables",
         title: "3. Explore the tables",
         intro: "The explorer shows the connections, schemas, tables, and columns. A table opens in a tab. In the tab, you can filter, sort, and edit the rows.",
@@ -181,8 +191,147 @@ pub const GUIDE: &[GuideText] = &[
         examples: &[],
     },
     GuideText {
+        group: GUIDE_START,
+        name: "Scripts",
+        title: "4. Scripts, commands, and settings",
+        intro: "SQLN saves each console automatically as a script. The settings change the keyboard mode (conventional or Vim), the shortcuts, the theme, and the AI completion. The docs folder has the full documentation.",
+        steps: &[
+            (Action::EditorSave, "Save the console now"),
+            (
+                Action::NavigatorScripts,
+                "Open the scripts without a connection",
+            ),
+            (Action::OpenSqlFile, "Open a SQL file as a console"),
+            (Action::OpenPalette, "Find and run a command"),
+            (
+                Action::ContextCommands,
+                "Show the commands of the current panel",
+            ),
+            (
+                Action::ExplorerCommands,
+                "Show the commands of the explorer",
+            ),
+            (Action::OpenSettings, "Open the settings"),
+        ],
+        examples: &[],
+    },
+    GuideText {
+        group: GUIDE_FEATURES,
+        name: "Query",
+        title: "5. Query tools",
+        intro: "A word such as :customer in SQL is a parameter. The parameters panel holds its value, and SQLN sends the value apart from the SQL. A plan shows how the database runs one statement. The history keeps the statements of the saved connections.",
+        steps: &[
+            (
+                Action::ToggleParameters,
+                "Show or hide the parameters panel",
+            ),
+            (Action::FocusParameters, "Go to the parameters panel"),
+            (Action::Explain, "Show the plan of the statement"),
+            (
+                Action::ExplainAnalyze,
+                "Run the statement and show the plan with the real times",
+            ),
+            (Action::RunSubquery, "Run the subquery at the cursor"),
+            (Action::FormatSql, "Format the SQL"),
+            (Action::SqlDiagnostics, "Show the problems of the SQL"),
+            (Action::ToggleComment, "Comment or uncomment the lines"),
+            (Action::EditorFind, "Find a text in the console"),
+            (Action::EditorReplace, "Replace a text in the console"),
+            (Action::OpenHistory, "Find a statement in the history"),
+        ],
+        examples: &[(
+            "Use a parameter",
+            "SELECT * FROM orders WHERE customer_id = :customer;",
+        )],
+    },
+    GuideText {
+        group: GUIDE_FEATURES,
+        name: "Data",
+        title: "6. Import, export, and edit data",
+        intro: "Export writes CSV, TSV, JSON, JSON Lines, or SQL inserts from the selection, the loaded rows, or all the rows. Import reads CSV, TSV, JSON, or JSON Lines into a table, with a column map and a preview. The edits of a table tab stay local until you review and save them. Auto-refresh runs a read again at an interval.",
+        steps: &[
+            (Action::GridExport, "Export the result to a file"),
+            (Action::GridImport, "In a table tab, import a file"),
+            (
+                Action::NavigatorImport,
+                "Import a file into the selected table",
+            ),
+            (Action::GridEditCell, "In a table tab, edit the cell"),
+            (Action::GridSetNull, "In a table tab, set the cell to NULL"),
+            (Action::GridNewRow, "In a table tab, add a row"),
+            (Action::GridDeleteRow, "In a table tab, delete the row"),
+            (Action::GridReviewEdits, "Review the changes"),
+            (Action::GridSaveEdits, "Save the changes"),
+            (Action::GridDiscardEdits, "Discard the changes"),
+            (Action::GridLoadMore, "In a table tab, load more rows"),
+            (Action::GridCountRows, "In a table tab, count the rows"),
+            (Action::AutoRefresh, "Run the read again at an interval"),
+        ],
+        examples: &[
+            (
+                "Run SQL without the interface and write CSV",
+                "sqln app.db --execute \"SELECT * FROM users\" --output csv > users.csv",
+            ),
+            (
+                "Run a script on a saved connection",
+                "sqln --connection app --execute - --output json < report.sql",
+            ),
+        ],
+    },
+    GuideText {
+        group: GUIDE_FEATURES,
+        name: "Schema",
+        title: "7. Schema, diagram, and server",
+        intro: "The structure tab shows the columns, keys, indexes, and other parts of a table. The ER diagram shows the tables of a schema and their keys. Compare finds the differences of structure or data between two schemas or tables, and writes a script. The sessions and locks tabs show the sessions of the server. You can stop a query or end a session after a question.",
+        steps: &[
+            (
+                Action::NavigatorStructure,
+                "Show the structure of the selected table",
+            ),
+            (
+                Action::NavigatorGenerate,
+                "Write SQL for the selected object, such as its DDL",
+            ),
+            (
+                Action::NavigatorDiagram,
+                "Show the ER diagram of the selected schema",
+            ),
+            (Action::OpenDiagram, "Show the ER diagram of the schema"),
+            (
+                Action::DiagramKeysOnly,
+                "In the diagram, show only the key columns, or all",
+            ),
+            (
+                Action::DiagramCopy,
+                "In the diagram, copy it as Mermaid text",
+            ),
+            (Action::NavigatorCompare, "Compare the selected item"),
+            (Action::OpenCompare, "Compare two schemas or tables"),
+            (
+                Action::CompareScript,
+                "In a compare tab, open the sync script in a new console",
+            ),
+            (Action::FollowKey, "In a table tab, follow a foreign key"),
+            (Action::NavigatorSessions, "Show the sessions of the server"),
+            (
+                Action::NavigatorLocks,
+                "Show the sessions that wait for a lock",
+            ),
+            (
+                Action::GridCancelQuery,
+                "In the sessions or locks tab, stop the query of the session",
+            ),
+            (
+                Action::GridEndSession,
+                "In the sessions or locks tab, end the session",
+            ),
+        ],
+        examples: &[],
+    },
+    GuideText {
+        group: GUIDE_FEATURES,
         name: "Kafka",
-        title: "4. Read Kafka with SELECT",
+        title: "8. Read Kafka with SELECT",
         intro: "A Kafka connection uses kafka://host:9092, or kafkas:// with TLS. SQLN reads the messages in the client with a SELECT subset: joins, aggregates, and ORDER BY are not supported. A plain SELECT reads the retained messages and stops at the last one. docs/KAFKA.md has the full syntax.",
         steps: &[
             (
@@ -246,28 +395,95 @@ pub const GUIDE: &[GuideText] = &[
         ],
     },
     GuideText {
-        name: "Scripts",
-        title: "5. Scripts, commands, and settings",
-        intro: "SQLN saves each console automatically as a script. The settings change the keyboard mode (conventional or Vim), the shortcuts, the theme, and the AI completion. The docs folder explains Kafka, AI, and MCP.",
+        group: GUIDE_AI,
+        name: "AI",
+        title: "9. Completion and AI",
+        intro: "The suggestions come from the catalog: schemas, tables, columns, keys, and the words of the dialect. AI completion and AI explanations need a provider in the settings, and they ask for your consent on each request. An AI suggestion shows as ghost text and never runs SQL. The MCP topic explains how an AI agent uses SQLN.",
         steps: &[
-            (Action::EditorSave, "Save the console now"),
+            (Action::EditorSuggestions, "Show the suggestions"),
+            (Action::EditorAiComplete, "Ask the AI to complete the SQL"),
             (
-                Action::NavigatorScripts,
-                "Open the scripts without a connection",
+                Action::EditorAiCompleteRequest,
+                "Tell the AI what SQL to write",
             ),
-            (Action::OpenSqlFile, "Open a SQL file as a console"),
-            (Action::OpenPalette, "Find and run a command"),
+            (Action::EditorAiAccept, "Accept the AI suggestion"),
+            (Action::EditorAiReject, "Reject the AI suggestion"),
             (
-                Action::ContextCommands,
-                "Show the commands of the current panel",
+                Action::AiExplainError,
+                "Ask the AI to explain the last error",
             ),
-            (
-                Action::ExplorerCommands,
-                "Show the commands of the explorer",
-            ),
-            (Action::OpenSettings, "Open the settings"),
+            (Action::AiExplainPlan, "Ask the AI to explain the plan"),
+            (Action::OpenSettings, "Set the AI provider in the settings"),
         ],
         examples: &[],
+    },
+    GuideText {
+        group: GUIDE_AI,
+        name: "MCP",
+        title: "10. MCP: AI agents in SQLN",
+        intro: "With sqln mcp, an AI agent such as Claude Code or OpenCode uses the open SQLN: its connections, consoles, results, and catalog. Keep SQLN open. The agent asks for access, and you choose the level. Allow gives reads, read-only queries, and edit proposals that you review. Allow all also edits the consoles directly; the database stays read-only. Full access also writes to the database. The read-only connections, the PROD question, and the question for a write without WHERE always apply. Settings > MCP holds the fields below, in the global or the project scope. The preferences of config.json keep them. docs/MCP.md has the full rules.",
+        steps: &[
+            (
+                Action::AgentSessions,
+                "Allow, change, or revoke the access of an agent",
+            ),
+            (
+                Action::AgentReview,
+                "Review the access requests and the SQL edits",
+            ),
+            (
+                Action::AgentDirect,
+                "Let the agent edit this console without review, or stop it",
+            ),
+            (Action::AgentStop, "Stop all the agent tasks"),
+            (Action::AgentTasks, "In an agent tab, stop one task"),
+            (
+                Action::AgentSession,
+                "In an agent tab, change or revoke the access",
+            ),
+            (
+                Action::AgentSqlToConsole,
+                "In an agent tab, copy the agent SQL to a new console",
+            ),
+            (
+                Action::AgentSqlClear,
+                "In an agent tab, clear the agent SQL",
+            ),
+            (
+                Action::OpenSettings,
+                "Open the settings, then the MCP section",
+            ),
+        ],
+        examples: &[
+            (
+                "Add SQLN to Claude Code",
+                "claude mcp add --transport stdio --scope user sqln -- sqln mcp",
+            ),
+            (
+                "Add SQLN to OpenCode, in ~/.config/opencode/opencode.json",
+                "\"mcp\": { \"sqln\": { \"type\": \"local\", \"command\": [\"sqln\", \"mcp\"] } }",
+            ),
+            (
+                "Then ask the agent to call request_access, and review the card in SQLN",
+                "request_access",
+            ),
+            (
+                "MCP (on by default): off closes the access and revokes all the agents",
+                "\"mcp\": true",
+            ),
+            (
+                "Default access (Ask by default): ask, propose, direct, or full for a new agent",
+                "\"mcpDefaultAccess\": \"ask\"",
+            ),
+            (
+                "Max access (Full access by default): propose, direct, or full, the highest level that an agent can get",
+                "\"mcpMaxAccess\": \"full\"",
+            ),
+            (
+                "Remember clients (on by default): a new session of the same client gets the same access until SQLN exits",
+                "\"mcpRememberClients\": true",
+            ),
+        ],
     },
 ];
 

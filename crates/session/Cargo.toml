@@ -12,6 +12,7 @@ sqln-sql.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 regex.workspace = true
+reqwest.workspace = true
 rustls.workspace = true
 rustls-native-certs.workspace = true
 serde.workspace = true

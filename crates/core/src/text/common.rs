@@ -122,6 +122,23 @@ Options:
   -h, --help             Show this text.
   -V, --version          Show the version.
 
+Connection options (they need a target and last for this session):
+  --read-only            Refuse changes to data. Not for Kafka.
+  --production           Mark the connection and ask before a change.
+  --pool <n>             Use at most n sessions.
+  --connect-timeout <s>  Stop a connect attempt after s seconds. Network only.
+  --sql-timeout <s>      Stop a statement after s seconds. 0 removes the limit.
+  --idle-timeout <s>     Close an idle session after s seconds. 0 keeps it open.
+  --foreign-keys on|off  Set the foreign key check of SQLite.
+  --busy-timeout <s>     Wait s seconds for a locked SQLite file.
+  --registry-user <user> Use this Schema Registry user. Kafka only. SQLN asks
+                         for the password on the terminal.
+  --max-scan <n>         Examine at most n messages in a Kafka read without its
+                         own SCAN. Not with --execute.
+  A URI also takes read_only, production, pool, connect_timeout, sql_timeout,
+  idle_timeout, registry_user, and max_scan, such as ?pool=2&sql_timeout=0.
+  Set each option in the URI or in its flag, not in both.
+
 Development options:
   --dialect <name>       Use postgres, mysql, sqlite, duckdb, redis, or kafka in a
                          console without a connection.

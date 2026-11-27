@@ -58,6 +58,8 @@ struct Inner {
     /// The error of each `COMMIT`. The transaction ends anyway, as PostgreSQL ends it
     /// after a serialization failure or a deferred constraint at the commit.
     commit_error: Mutex<Option<String>>,
+    /// A catalog read that never answers, as a server that stops answering.
+    catalog_hangs: std::sync::atomic::AtomicBool,
 }
 
 /// A connector whose sessions answer what a handler chooses.
@@ -86,6 +88,7 @@ impl MockConnector {
             catalog: Mutex::new(Catalog::default()),
             columns: Mutex::new(Vec::new()),
             commit_error: Mutex::new(None),
+            catalog_hangs: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
@@ -116,6 +119,11 @@ impl MockConnector {
     /// Makes each `COMMIT` fail with this message after the end of the transaction.
     pub fn fail_commit(&self, message: &str) {
         *self.0.commit_error.lock().unwrap() = Some(message.to_owned());
+    }
+
+    /// Makes each catalog read wait without an end.
+    pub fn hang_catalog(&self) {
+        self.0.catalog_hangs.store(true, Ordering::SeqCst);
     }
 
     /// The count of the connections that opened.
@@ -194,6 +202,9 @@ impl Session for MockSession {
     }
 
     async fn read_catalog(&mut self) -> Result<Catalog, ExecError> {
+        if self.inner.catalog_hangs.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         Ok(self.inner.catalog.lock().unwrap().clone())
     }
 

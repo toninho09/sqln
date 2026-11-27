@@ -2,6 +2,7 @@
 //! only `match` that chooses it. Code outside this module reads these rules and does not
 //! compare `Dialect` values, so a new dialect needs only a new file and a new arm.
 
+mod clickhouse;
 mod databricks;
 mod duckdb;
 mod kafka;
@@ -73,6 +74,9 @@ pub struct Syntax {
     pub dotted_schema: bool,
     /// The database folds a name without quotes to lower case.
     pub folds_to_lower: bool,
+    /// A quoted table name can name a file or a URL that the database reads, such as
+    /// `FROM 'data.csv'` in DuckDB or ``FROM csv.`/path` `` in Databricks.
+    pub file_names: bool,
 }
 
 /// The behavior of one dialect. It has no default methods, so a new dialect must decide
@@ -109,6 +113,7 @@ impl Dialect {
             Dialect::Redis => &redis::Redis,
             Dialect::Kafka => &kafka::Kafka,
             Dialect::Databricks => &databricks::Databricks,
+            Dialect::ClickHouse => &clickhouse::ClickHouse,
         }
     }
 
@@ -141,4 +146,5 @@ const BASE: Syntax = Syntax {
     booleans: ("1", "0"),
     dotted_schema: false,
     folds_to_lower: false,
+    file_names: false,
 };

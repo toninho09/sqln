@@ -517,6 +517,21 @@ fn the_rules_of_the_content_make_a_file_invalid() {
             "username":"u","warehouse":"abc"}]}"#,
             "warehouse",
         ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"libsql","host":"h",
+            "database":"main"}]}"#,
+            "no database",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"libsql","host":"h",
+            "schemas":["main"]}]}"#,
+            "no schemas",
+        ),
+        (
+            r#"{"version":1,"connections":[{"id":"a","name":"x","kind":"clickhouse",
+            "host":"/tmp/s","username":"u"}]}"#,
+            "host name",
+        ),
     ];
     for (index, (text, word)) in cases.into_iter().enumerate() {
         let (store, _) = store_in(&format!("rules-{index}"));
@@ -790,6 +805,35 @@ fn a_definition_round_trips_through_an_entry_without_the_password() {
 }
 
 #[test]
+fn automatic_tls_is_an_entry_without_a_tls_object() {
+    use sqln_exec::connection::Definition;
+    use sqln_session::connector::target::{Engine, NetworkTarget};
+
+    let network = NetworkTarget {
+        engine: Engine::Postgres,
+        address: Address::Tcp {
+            host: "db.example.test".into(),
+            port: 5432,
+        },
+        user: "u".into(),
+        password: None,
+        database: None,
+        tls: Tls::Auto,
+        kafka: Default::default(),
+        databricks: Default::default(),
+    };
+    let definition = Definition::new("auto", Source::Network(network));
+    let entry = config::to_entry("id-auto", &definition);
+    // Older versions read an entry without `tls`.
+    assert_eq!(entry.tls, None);
+    let back = config::to_definition(&entry, PathBuf::from("/base"));
+    let Source::Network(target) = &back.source else {
+        panic!("network")
+    };
+    assert_eq!(target.tls, Tls::Auto);
+}
+
+#[test]
 fn a_databricks_definition_keeps_its_warehouse_and_catalog_in_the_entry() {
     use sqln_exec::connection::Definition;
     use sqln_session::connector::target::{Engine, Secret, parse_uri};
@@ -813,6 +857,32 @@ fn a_databricks_definition_keeps_its_warehouse_and_catalog_in_the_entry() {
     assert_eq!(back.databricks.warehouse, "abc123");
     assert_eq!(back.database.as_deref(), Some("main"));
     assert!(back.password.is_none());
+}
+
+#[test]
+fn clickhouse_and_libsql_definitions_keep_their_kind_in_the_entry() {
+    use sqln_exec::connection::Definition;
+    use sqln_session::connector::target::{Engine, parse_uri};
+
+    for (uri, kind, engine) in [
+        (
+            "clickhouse://sqln:secret@ch.net/sales",
+            "clickhouse",
+            Engine::ClickHouse,
+        ),
+        ("libsql://:secret@db.turso.io", "libsql", Engine::Libsql),
+    ] {
+        let definition = Definition::new("x", Source::Network(parse_uri(uri).unwrap()));
+        let entry = config::to_entry("id", &definition);
+        let text = serde_json::to_string(&entry).unwrap();
+        assert!(!text.contains("secret"), "{text}");
+        assert!(text.contains(&format!("\"kind\":\"{kind}\"")), "{text}");
+        let back = config::to_definition(&entry, PathBuf::from("/base"));
+        let Source::Network(back) = &back.source else {
+            panic!("network")
+        };
+        assert_eq!(back.engine, engine);
+    }
 }
 
 #[test]
@@ -923,7 +993,8 @@ fn moving_a_script_to_another_scope_copies_checks_and_removes_the_original() {
     let (from, to) = (&store.global, store.project.as_ref().unwrap());
     scripts::create(from, &meta("s1", "a", "old", Scope::Global), "SELECT 2;").unwrap();
     let moved = meta("s1", "a", "new", Scope::Project);
-    let hash = scripts::move_to(from, to, &moved).unwrap();
+    let known = file::Expect::Hash(file::hash(b"SELECT 2;"));
+    let hash = scripts::move_to(from, to, &moved, known).unwrap();
     assert_eq!(hash, file::hash(b"SELECT 2;"));
     assert!(scripts::list(from, Scope::Global).is_empty());
     let list = scripts::list(to, Scope::Project);
@@ -938,7 +1009,15 @@ fn a_move_to_a_place_that_has_the_script_keeps_the_original() {
     let (from, to) = (&store.global, store.project.as_ref().unwrap());
     scripts::create(from, &meta("s1", "a", "old", Scope::Global), "mine").unwrap();
     scripts::create(to, &meta("s1", "a", "x", Scope::Project), "theirs").unwrap();
-    assert!(scripts::move_to(from, to, &meta("s1", "a", "new", Scope::Project)).is_err());
+    assert!(
+        scripts::move_to(
+            from,
+            to,
+            &meta("s1", "a", "new", Scope::Project),
+            file::Expect::Any,
+        )
+        .is_err()
+    );
     assert_eq!(scripts::read_text(from, "s1").unwrap().0, "mine");
     assert_eq!(scripts::read_text(to, "s1").unwrap().0, "theirs");
 }
@@ -1167,7 +1246,7 @@ fn a_custom_theme_round_trips_through_the_configuration() {
         )),
         ..config::Preferences::default()
     };
-    config::change_preferences(&store.global, Scope::Global, preferences).unwrap();
+    config::change_preferences(&store.global, Scope::Global, preferences, None).unwrap();
     let text = fs::read_to_string(store.global.config_file()).unwrap();
     assert!(text.contains("\"custom\": \"mine\""), "{text}");
     let loaded = config::preferences(&store.global, Scope::Global).unwrap();

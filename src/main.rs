@@ -5,8 +5,10 @@ use std::process::ExitCode;
 use sqln::app::{Options, run};
 use sqln::connection::{Definition, Source};
 use sqln::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
-use sqln::connector::target::{Engine, OpenTarget, open_target};
+use sqln::connector::sqlite::SqliteTarget;
+use sqln::connector::target::{ConnectionOptions, OpenTarget, OptionName, open_target};
 use sqln::export::ExportFormat;
+use sqln::grid::printable;
 use sqln::sql::Dialect;
 use sqln::store::Scope;
 use sqln::store::{self, Root, Store};
@@ -15,7 +17,8 @@ use sqln::ui::text::{self, HELP};
 
 enum Command {
     Mcp,
-    Run(Cli),
+    /// Boxed, because the options make it much larger than the other commands.
+    Run(Box<Cli>),
     Help,
     Version,
 }
@@ -37,6 +40,8 @@ struct Cli {
     continue_on_error: bool,
     yes: bool,
     password_file: Option<PathBuf>,
+    /// The connection options of the flags. They need a target.
+    connection_options: ConnectionOptions,
 }
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
@@ -121,10 +126,22 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 cli.dialect =
                     Some(Dialect::parse(&name).ok_or_else(|| format!("Unknown dialect: {name}"))?);
             }
+            flag if let Some(name) = OptionName::from_flag(flag) => {
+                let value = if name.is_switch() {
+                    "true".to_owned()
+                } else {
+                    args.next()
+                        .ok_or_else(|| format!("{flag} needs a value."))?
+                };
+                cli.connection_options.set(name, &value, flag)?;
+            }
             other if other.starts_with('-') => return Err(format!("Unknown option: {other}")),
             _ if cli.target.is_some() => return Err(text::ONE_TARGET.to_owned()),
             other => cli.target = Some(other.to_owned()),
         }
+    }
+    if !cli.connection_options.is_empty() && cli.target.is_none() {
+        return Err(text::OPTIONS_NEED_TARGET.into());
     }
     if cli.execute.is_some() {
         if cli.script.is_some() || cli.dialect.is_some() {
@@ -149,35 +166,60 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Command, String> {
                 .into(),
         );
     }
-    Ok(Command::Run(cli))
+    Ok(Command::Run(Box::new(cli)))
 }
 
-/// Adds the target of the command line. Its connection lasts for this session.
-fn open(options: &mut Options, target: &str) -> Result<(), String> {
+/// Adds the target of the command line. Its connection lasts for this session. The
+/// options get their check before any password question.
+fn open(options: &mut Options, target: &str, flags: ConnectionOptions) -> Result<(), String> {
     match open_target(target)? {
-        OpenTarget::File(path) => options.database = Some(path),
+        OpenTarget::File(path) => {
+            // The application adds the file later, so the check runs on a copy here.
+            Definition::sqlite(SqliteTarget::new(&path)).apply(&flags)?;
+            options.database = Some(path);
+            options.target_options = flags;
+        }
         OpenTarget::Duckdb(text) => {
             let target = DuckdbTarget {
                 source: duckdb_source(&text),
                 allow_create: true,
                 read_only: false,
             };
-            options.connections.push(Definition::duckdb(target));
+            if flags.read_only == Some(true) && !target.is_memory() && !target.source_exists() {
+                return Err(text::READ_ONLY_NO_FILE.to_owned());
+            }
+            let mut definition = Definition::duckdb(target);
+            definition.apply(&flags)?;
+            options.connections.push(definition);
         }
-        OpenTarget::Network(mut target) => {
-            if target.password.is_none() && target.engine.needs_password() && stdin().is_terminal()
-            {
-                let prompt = if target.engine == Engine::Databricks {
-                    text::TOKEN_PROMPT.to_owned()
+        OpenTarget::Network {
+            target,
+            options: uri,
+        } => {
+            let connection_options = flags.merge(uri)?;
+            let mut definition = Definition::new(target.label(), Source::Network(*target));
+            definition.apply(&connection_options)?;
+            let Source::Network(target) = &mut definition.source else {
+                unreachable!("The definition holds a network target.");
+            };
+            let terminal = stdin().is_terminal();
+            if target.password.is_none() && target.engine.needs_password() && terminal {
+                let prompt = if target.engine.uses_token() {
+                    text::token_prompt(target.engine.label())
                 } else {
                     text::password_prompt(&target.user)
                 };
                 target.password = read_password(&prompt).map_err(|error| error.to_string())?;
             }
-            let name = target.label();
-            options
-                .connections
-                .push(Definition::new(name, Source::Network(*target)));
+            if let Some(registry) = target.kafka.registry.as_mut()
+                && !registry.user.is_empty()
+                && registry.password.is_none()
+                && terminal
+            {
+                let prompt = text::registry_password_prompt(&printable(&registry.user));
+                registry.password = read_password(&prompt).map_err(|error| error.to_string())?;
+            }
+            options.connections.push(definition);
         }
     }
     options.session_target = true;
@@ -233,7 +275,7 @@ fn options_of(cli: Cli) -> Result<Options, String> {
         options.script = Some(script.clone());
     }
     if let Some(target) = &cli.target {
-        open(&mut options, target)?;
+        open(&mut options, target, cli.connection_options.clone())?;
     }
     Ok(options)
 }
@@ -286,15 +328,16 @@ fn main() -> ExitCode {
                 continue_on_error: cli.continue_on_error,
                 yes: cli.yes,
                 password_file: cli.password_file,
+                connection_options: cli.connection_options,
             };
             if let Err(error) = sqln::batch::run(options) {
-                sqln::batch::report_error(&error.message);
+                sqln::batch::report_failure(&error.message, error.hint.as_deref());
                 return ExitCode::from(if error.usage { 2 } else { 1 });
             }
         }
         Ok(Command::Run(cli)) => {
             let log = cli.log.clone();
-            let options = match options_of(cli) {
+            let options = match options_of(*cli) {
                 Ok(options) => options,
                 Err(message) => {
                     eprintln!("sqln: {message}");
@@ -315,7 +358,7 @@ fn main() -> ExitCode {
             }
         }
         Err(message) => {
-            eprintln!("sqln: {}\n\n{HELP}", sqln::grid::printable(&message));
+            eprintln!("sqln: {}\n\n{HELP}", printable(&message));
             return ExitCode::from(2);
         }
     }

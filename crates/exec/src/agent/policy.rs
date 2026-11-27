@@ -2,7 +2,7 @@
 
 use super::Error;
 use crate::sql::{Dialect, TokenKind, is_plain_read, tokenize};
-use sqlparser::ast::{Query, Select, Statement, Visit, Visitor};
+use sqlparser::ast::{ObjectName, ObjectNamePart, Query, Select, Statement, Visit, Visitor};
 use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
@@ -70,14 +70,36 @@ pub fn validate(statements: &[String], dialect: Dialect) -> Result<(), Error> {
             sql,
         )
         .map_err(|_| refused())?;
-        if parsed.len() != 1 || parsed.visit(&mut Read).is_break() {
+        let mut read = Read {
+            file_names: dialect.syntax().file_names,
+        };
+        if parsed.len() != 1 || parsed.visit(&mut read).is_break() {
             return Err(refused());
         }
     }
     Ok(())
 }
 
-struct Read;
+/// Characters of a file path or a URL. A table name rarely has them.
+const PATH_CHARACTERS: [char; 4] = ['.', '/', '\\', ':'];
+
+/// Formats that read a file when a quoted path follows them, as in Databricks.
+const FILE_FORMATS: [&str; 9] = [
+    "avro",
+    "binaryfile",
+    "csv",
+    "delta",
+    "json",
+    "orc",
+    "parquet",
+    "text",
+    "xml",
+];
+
+struct Read {
+    /// The database reads a quoted table name as a file or a URL.
+    file_names: bool,
+}
 impl Visitor for Read {
     type Break = ();
     fn pre_visit_statement(&mut self, statement: &Statement) -> ControlFlow<()> {
@@ -100,6 +122,30 @@ impl Visitor for Read {
         } else {
             ControlFlow::Continue(())
         }
+    }
+    /// A string as a table name reads a file in DuckDB, and a quoted path does so in
+    /// DuckDB and Databricks. These sources have no native read-only context that stops
+    /// such reads, so the policy refuses these names.
+    fn pre_visit_relation(&mut self, relation: &ObjectName) -> ControlFlow<()> {
+        let mut format = false;
+        for part in &relation.0 {
+            let ObjectNamePart::Identifier(ident) = part else {
+                return ControlFlow::Break(());
+            };
+            let quoted = ident.quote_style.is_some();
+            // A quoted name after a format, such as ``parquet.`export` ``, is a path
+            // without path characters.
+            if ident.quote_style == Some('\'')
+                || (self.file_names && quoted && (format || ident.value.contains(PATH_CHARACTERS)))
+            {
+                return ControlFlow::Break(());
+            }
+            format = !quoted
+                && FILE_FORMATS
+                    .iter()
+                    .any(|name| ident.value.eq_ignore_ascii_case(name));
+        }
+        ControlFlow::Continue(())
     }
     fn pre_visit_select(&mut self, select: &Select) -> ControlFlow<()> {
         if select.into.is_some() {

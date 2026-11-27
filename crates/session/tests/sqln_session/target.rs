@@ -64,7 +64,7 @@ fn an_ipv6_address_uses_brackets() {
             port: 7000
         }
     );
-    assert_eq!(target.tls, Tls::Disabled);
+    assert_eq!(target.tls, Tls::Auto);
 }
 
 #[test]
@@ -76,15 +76,21 @@ fn a_socket_comes_from_a_parameter() {
     );
     let target = parse_uri("mysql://u@/d?socket=/tmp/mysql.sock").unwrap();
     assert_eq!(target.address, Address::Socket("/tmp/mysql.sock".into()));
-    assert_eq!(target.tls, Tls::Disabled);
+    assert_eq!(target.tls, Tls::Auto);
+    assert_eq!(target.tls.first_try(&target.address), Tls::Disabled);
     assert!(parse_uri("mysql://u@h/d?socket=/tmp/mysql.sock").is_err());
 }
 
 #[test]
-fn local_addresses_use_no_tls_and_remote_addresses_verify() {
+fn without_a_choice_local_addresses_try_no_tls_first_and_remote_addresses_verify() {
     for host in ["localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "[::1]"] {
         let target = parse_uri(&format!("postgres://u@{host}/d")).unwrap();
-        assert_eq!(target.tls, Tls::Disabled, "{host}");
+        assert_eq!(target.tls, Tls::Auto, "{host}");
+        assert_eq!(
+            target.tls.first_try(&target.address),
+            Tls::Disabled,
+            "{host}"
+        );
     }
     for host in [
         "db.example.test",
@@ -94,8 +100,25 @@ fn local_addresses_use_no_tls_and_remote_addresses_verify() {
         "localhost.example.test",
     ] {
         let target = parse_uri(&format!("mysql://u@{host}/d")).unwrap();
-        assert_eq!(target.tls, Tls::Verify(TlsFiles::default()), "{host}");
+        assert_eq!(target.tls, Tls::Auto, "{host}");
+        assert_eq!(
+            target.tls.first_try(&target.address),
+            Tls::Verify(TlsFiles::default()),
+            "{host}"
+        );
     }
+}
+
+#[test]
+fn tls_files_without_sslmode_ask_for_tls() {
+    let target = parse_uri("postgres://u@localhost/d?sslrootcert=/c/ca.pem").unwrap();
+    assert_eq!(
+        target.tls,
+        Tls::Verify(TlsFiles {
+            ca: Some(PathBuf::from("/c/ca.pem")),
+            client: None,
+        })
+    );
 }
 
 #[test]
@@ -111,6 +134,7 @@ fn modes_with_a_fallback_to_plain_text_fail() {
     for mode in ["prefer", "allow", "PREFER"] {
         let error = parse_uri(&format!("postgres://u@h/d?sslmode={mode}")).unwrap_err();
         assert!(error.contains("fall back"), "{error}");
+        assert!(error.contains("omit sslmode"), "{error}");
     }
 }
 
@@ -210,7 +234,7 @@ fn redis_works_without_a_user() {
     assert_eq!(target.user, "");
     assert_eq!(target.password, Some(Secret::new("s3cret")));
     assert_eq!(target.database.as_deref(), Some("3"));
-    assert_eq!(target.tls, Tls::Disabled);
+    assert_eq!(target.tls, Tls::Auto);
 
     let target = parse_uri("redis://127.0.0.1").unwrap();
     assert_eq!(target.password, None);
@@ -224,9 +248,13 @@ fn a_redis_database_is_a_number() {
 }
 
 #[test]
-fn a_remote_redis_address_verifies_tls() {
+fn a_remote_redis_address_verifies_tls_first() {
     let target = parse_uri("redis://cache.example.test").unwrap();
-    assert_eq!(target.tls, Tls::Verify(TlsFiles::default()));
+    assert_eq!(target.tls, Tls::Auto);
+    assert_eq!(
+        target.tls.first_try(&target.address),
+        Tls::Verify(TlsFiles::default())
+    );
 
     let target = parse_uri("redis://cache.example.test?sslmode=disable").unwrap();
     assert_eq!(target.tls, Tls::Disabled);
@@ -260,7 +288,7 @@ fn a_databricks_text_gives_the_token_the_catalog_and_the_warehouse() {
             port: 443
         }
     );
-    assert_eq!(target.tls, Tls::Verify(TlsFiles::default()));
+    assert_eq!(target.tls, Tls::Auto);
 
     let target = parse_uri("databricks://h?warehouse=abc").unwrap();
     assert_eq!(target.database, None);
@@ -278,4 +306,137 @@ fn a_databricks_warehouse_is_required_and_belongs_only_to_databricks() {
     ] {
         assert!(parse_uri(uri).is_err(), "{uri}");
     }
+}
+
+#[test]
+fn a_clickhouse_text_gives_the_user_the_database_and_the_http_port() {
+    let target = parse_uri("clickhouse://sqln:secret@ch.example.com/sales").unwrap();
+    assert_eq!(target.engine, Engine::ClickHouse);
+    assert_eq!(target.user, "sqln");
+    assert_eq!(target.password, Some(Secret::new("secret")));
+    assert_eq!(target.database.as_deref(), Some("sales"));
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "ch.example.com".into(),
+            port: 8123
+        }
+    );
+    assert!(parse_uri("clickhouse://h").is_err(), "a user is required");
+    assert!(parse_uri("clickhouse://u@?socket=/tmp/s").is_err());
+}
+
+#[test]
+fn a_libsql_text_gives_the_token_and_has_no_database() {
+    let target = parse_uri("libsql://:tok@db-org.turso.io").unwrap();
+    assert_eq!(target.engine, Engine::Libsql);
+    assert_eq!(target.user, "");
+    assert_eq!(target.password, Some(Secret::new("tok")));
+    assert_eq!(
+        target.address,
+        Address::Tcp {
+            host: "db-org.turso.io".into(),
+            port: 443
+        }
+    );
+    // A local `sqld` has no authentication.
+    let target = parse_uri("libsql://127.0.0.1:8080").unwrap();
+    assert_eq!(target.password, None);
+    let error = parse_uri("libsql://h/main").unwrap_err();
+    assert_eq!(error, sqln_core::text::LIBSQL_NO_DATABASE);
+    assert!(parse_uri("libsql://?socket=/tmp/s").is_err());
+}
+
+#[test]
+fn the_command_line_reads_the_connection_options_of_the_text() {
+    use sqln_session::connector::target::parse_uri_options;
+    use std::time::Duration;
+    let (target, options) = parse_uri_options(
+        "postgres://u@h/d?read_only=true&production=on&pool=2&connect_timeout=9&sql_timeout=0&idle_timeout=60",
+    )
+    .unwrap();
+    assert_eq!(target.engine, Engine::Postgres);
+    assert_eq!(options.read_only, Some(true));
+    assert_eq!(options.production, Some(true));
+    assert_eq!(options.pool, Some(2));
+    assert_eq!(options.connect_timeout, Some(Duration::from_secs(9)));
+    assert_eq!(options.sql_timeout, Some(None), "0 removes the limit");
+    assert_eq!(options.idle_timeout, Some(Some(Duration::from_secs(60))));
+
+    let (_, options) =
+        parse_uri_options("kafka://h?registry=https://r.test&registry_user=a%40b&max_scan=50")
+            .unwrap();
+    assert_eq!(options.registry_user.as_deref(), Some("a@b"));
+    assert_eq!(options.max_scan, Some(50));
+}
+
+#[test]
+fn a_bad_connection_option_names_the_parameter_and_not_the_value() {
+    use sqln_session::connector::target::parse_uri_options;
+    for (text, message) in [
+        (
+            "postgres://u@h/d?pool=0",
+            "pool needs a number greater than 0.",
+        ),
+        ("postgres://u@h/d?pool=many", "pool needs a number."),
+        (
+            "postgres://u@h/d?connect_timeout=0",
+            "connect_timeout needs a number greater than 0.",
+        ),
+        (
+            "postgres://u@h/d?read_only=maybe",
+            "read_only needs true, false, on, or off.",
+        ),
+        ("postgres://u@h/d?pool=1&pool=2", "Use pool only once."),
+        (
+            "kafka://h?max_scan=0",
+            "max_scan needs a number greater than 0.",
+        ),
+        (
+            "kafka://h?registry_user=",
+            "registry_user needs a user name.",
+        ),
+        (
+            "postgres://u@h/d?busy_timeout=1",
+            "Unknown connection parameter: busy_timeout",
+        ),
+    ] {
+        assert_eq!(parse_uri_options(text).unwrap_err(), message, "{text}");
+    }
+}
+
+#[test]
+fn the_form_text_refuses_the_options_of_the_command_line() {
+    let error = parse_uri("postgres://u@h/d?pool=2").unwrap_err();
+    assert_eq!(
+        error,
+        "pool is valid only on the command line. Use the form fields."
+    );
+    assert!(parse_uri("kafka://h?max_scan=5").is_err());
+}
+
+#[test]
+fn an_option_in_the_text_and_in_its_flag_is_refused() {
+    use sqln_session::connector::target::{ConnectionOptions, OptionName};
+    let mut flags = ConnectionOptions::default();
+    flags.set(OptionName::Pool, "3", "--pool").unwrap();
+    flags
+        .set(OptionName::ReadOnly, "true", "--read-only")
+        .unwrap();
+    assert_eq!(
+        flags.set(OptionName::Pool, "4", "--pool").unwrap_err(),
+        "Use --pool only once."
+    );
+    let mut uri = ConnectionOptions::default();
+    uri.set(OptionName::Pool, "2", "pool").unwrap();
+    assert_eq!(
+        flags.clone().merge(uri).unwrap_err(),
+        "Set pool in the URI or in --pool, not both."
+    );
+    let mut uri = ConnectionOptions::default();
+    uri.set(OptionName::SqlTimeout, "5", "sql_timeout").unwrap();
+    let merged = flags.merge(uri).unwrap();
+    assert_eq!(merged.pool, Some(3));
+    assert_eq!(merged.read_only, Some(true));
+    assert!(merged.sql_timeout.is_some());
 }

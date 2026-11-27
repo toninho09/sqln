@@ -32,7 +32,8 @@ Each crate depends only on the crates below it in this graph. Cargo refuses a cy
 ```text
 sqln-core ← sqln-sql ← sqln-session ─┬─ sqln-postgres, sqln-mysql, sqln-sqlite,
 sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka,
-                                     │  sqln-databricks ──────────────────────────┐
+                                     │  sqln-databricks, sqln-clickhouse,
+                                     │  sqln-libsql ──────────────────────────────┐
                                      ├─ sqln-store ← sqln-exec ─┬─ sqln-ui ───────┤
                                      │                          └─ sqln-runtime ──┤
                                      └─ sqln-connector ────────────────────────────┴─ sqln
@@ -40,11 +41,11 @@ sqln-vault                           │  sqln-duckdb, sqln-redis, sqln-kafka,
 
 | Crate | Folder | Contents |
 |---|---|---|
-| `sqln-core` | `crates/core` | `catalog`, `clipboard`, `filter_list`, `find`, `grid`, `input`, `limited`, `line_input`, `log`, `mark_list`, `message`, `progress`, `sink`, `text`, `wrap` |
+| `sqln-core` | `crates/core` | `catalog`, `clipboard`, `failure`, `filter_list`, `find`, `grid`, `input`, `limited`, `line_input`, `log`, `mark_list`, `message`, `progress`, `sink`, `text`, `wrap` |
 | `sqln-sql` | `crates/sql` | `sql`, `structure` |
-| `sqln-session` | `crates/session` | `connector` (the contract, connection targets, `tls`, `words`, and the parts of the Kafka and Redis drivers that need no driver library), `pool`, `trace` |
+| `sqln-session` | `crates/session` | `connector` (the contract, connection targets, `tls`, `http` (the `reqwest` client of the HTTP connectors), `words`, the SQLite catalog queries that both SQLite drivers use, and the parts of the Kafka and Redis drivers that need no driver library), `pool`, `trace` |
 | `sqln-vault` | `crates/vault` | The system vault. `sqln-store` and `sqln-kafka` use it |
-| `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`, `sqln-databricks` | `crates/<driver>` | One connector each, with its driver library. `sqln-databricks` uses `reqwest` and the Arrow crates |
+| `sqln-postgres`, `sqln-mysql`, `sqln-sqlite`, `sqln-duckdb`, `sqln-redis`, `sqln-kafka`, `sqln-databricks`, `sqln-clickhouse`, `sqln-libsql` | `crates/<driver>` | One connector each, with its driver library. `sqln-databricks` uses `reqwest` and the Arrow crates. `sqln-clickhouse` uses the HTTP interface of ClickHouse, and `sqln-libsql` uses the Hrana protocol over HTTP; both use `reqwest` only |
 | `sqln-connector` | `crates/connector` | Facade: `connector` joins the contract and the drivers at the old paths. `connector::open` opens the connector of a saved definition. Each driver is an optional feature; without one, `open` returns `connector::Unavailable`, which keeps the dialect and explains the missing feature on connect |
 | `sqln-store` | `crates/store` | `creds`, `script_file`, `store`, `trust` |
 | `sqln-exec` | `crates/exec` | `agent`, `ai`, `analysis`, `arrange`, `command_log`, `compare`, `complete`, `connection`, `data_edit`, `definition`, `diagram`, `dialect`, `exec` (types only), `export`, `import`, `plan` |
@@ -131,7 +132,7 @@ Every crate uses the lints of `[workspace.lints]`. They deny `unsafe_code`, `unw
 | `sink` | Result sink, statement keys, and read limits |
 | `progress` | Read counts that the screen shows during a read |
 | `pool` | Limit, queue, reservation, and cleaning |
-| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, Kafka, and Databricks connectors, with the Schema Registry client and the field paths of a schema (`kafka/fields.rs`), which are the columns of a topic |
+| `connector` | Contract and PostgreSQL, MySQL, SQLite, DuckDB, Redis/Valkey, Kafka, Databricks, ClickHouse, and libSQL connectors, with the Schema Registry client and the field paths of a schema (`kafka/fields.rs`), which are the columns of a topic |
 | `grid` | Rows in one block each (`row`), widths, search, budget, TSV, and readable JSON shape (`json`) |
 | `export` | Export formats and temporary file. `export_form` holds the modal form |
 | `import` | File readers, `INSERT` text, batches, and the error log. `import_form` holds the modal form |
@@ -516,6 +517,7 @@ trait Session: Send {
 
 The `async-trait` crate makes `Box<dyn Session>` possible.
 `ExecError` and `ConnectError` carry an `ErrorKind`: `Syntax`, `Permission`, `Auth`, `Connection`, `Timeout`, `Canceled`, `Resource`, `Unsupported`, or `Other`. Each driver reads it from the code of its library or server (SQLSTATE, MySQL error number, SQLite and DuckDB result code, Redis error kind, Databricks error code or HTTP status), never from the message text. A `Connection` error closes the session in the runner, because its state is unknown. `ConnectError::password_refused` stays separate from `Auth`: a rule such as `pg_hba.conf` is `Auth`, but a new password does not change it.
+`ExecError` and `ConnectError` also carry `fix: Option<Fix>`, the configuration that can correct the failure. `Fix` and `Failure` (a message and its fix) live in `sqln_core::failure`, with the hint texts, and `sqln_session::connector` exports them. A driver reads the fix from a code; `connector::fix::network_fix` reads it from an `io::Error` or a `rustls` certificate error, and `AutoTls` adds the fix of an explicit TLS mode and of a host name that does not resolve, and keeps `Port` only when each address of the host refuses it. The runner adds `SqlTimeout` and decides the source of a read-only refusal. `StatementFinished` and `ExecutionFinished` carry the fix to **Messages**, the agent replies, and batch stderr. The catalog and column reads put the hint at the end of their one-line message.
 `read_foreign_keys` and `read_referencing_keys` have an empty default, so a source without keys does not write them. `Manager::load_columns` reads both lists together with the columns, and a key failure does not fail the columns. A key that reaches a relation has the shape of a key that leaves it: `columns` are the columns of the relation, and `target` is the other table.
 `read_catalog` also reads the supported routines, sequences, triggers, and types into `Schema::objects`.
 `read_catalog_of` keeps the configured schemas and the current schema. Redis skips reads of hidden databases.
@@ -536,12 +538,19 @@ Closing the connection is the only case that abandons that future.
 | Redis/Valkey | `CLIENT UNBLOCK` on a temporary connection; no effect, close the session | `DISCARD`, the `CLIENT` name and modes, `UNWATCH`, and back to the database of the connection, in one round trip | Always `None`: the source has no manual transaction |
 | Kafka | Nothing: the read watches the stop token of the sink | Nothing: each read owns its consumer | Always `None`: each command only reads |
 | Databricks | `POST /statements/{id}/cancel`; `run` polls the status to the final state | Back to the catalog of the connection, without a schema | Always `None`: the API has no session |
+| ClickHouse | `KILL QUERY WHERE query_id = …` in a request without the session | A new `session_id`, and back to the database of the connection | Always `None`: the source has no transactions |
+| libSQL | Ends the wait only: Hrana cannot stop a statement, so the session closes | `close` of the Hrana stream; the next statement opens a new stream | `get_autocommit` on the open stream; `None` without a stream |
 
 Databricks sends each statement with `EXTERNAL_LINKS` and `ARROW_STREAM`. The session polls the status, then downloads one result part at a time, inside `ResultSink::memory_limit`, and sends the rows of each Arrow batch before the next download. A second client downloads the links, so the token never goes to cloud storage.
+
+ClickHouse sends each statement with `default_format=TabSeparatedWithNamesAndTypes`, a `query_id`, and the `session_id` of the session, and reads the answer line by line. A line longer than `ResultSink::memory_limit` fails. An error in the middle of the answer ends the statement. A read-only session sends `readonly=2`.
+
+libSQL sends `POST /v3/pipeline` with the `baton` of the stream. The whole answer of a statement must fit in `ResultSink::memory_limit`. `sqld` refuses `PRAGMA query_only`, so a read-only session refuses a write with the shared check, as Databricks does.
 
 `run` sends one statement, delivers the rows to `ResultSink`, and obeys the `Flow::Stop` return.
 One statement may deliver several results, such as `CALL` in MySQL, and the cap applies to each one.
 `ResultSink` sends `ResultDone` at the end of each result.
+`set_columns` starts a result without types. `set_typed_columns` also sends the database type of each column: PostgreSQL, MySQL, SQLite, DuckDB, Databricks, ClickHouse, and libSQL send it, and Redis and Kafka do not. Only the MCP replies show the types.
 Dropping `ResultSink` returns the rows still in the batch to the budget.
 `ResultSink` applies the cap and the budget, and gathers the rows in batches of 200.
 `ResultSink::track` gives the screen a `ReadProgress` with the columns of the next result. The connector writes its atomic counts, and the screen reads them at each frame, so the counts never use the event queue. Kafka uses it for its reads.
@@ -561,7 +570,7 @@ A preview reads only the visible prefix. TSV encoding borrows selected values wi
 - `Syntax` holds the lexical rules (comments, quotes, escapes, parameter markers) and the rules that SQLN uses to write SQL (identifier quote, literals, booleans). The lexer reads it once for each text, not for each token.
 - `SqlDialect` holds the behavior that data cannot express: the `sqlparser` dialect, the text literal, the marker of a named parameter, the catalog queries of the structure tab, and the session signals. `None` means that the source does not have the feature, and the interface hides it (for example, `structure::has_sessions`).
 - `sqln_exec::dialect` has one file for each dialect too. Each file implements `Features`, and `dialect::features()` is the only `match` that chooses the file. `Vocabulary` holds the completion words: keywords, statement starters, types, functions, and the grammar choices (`ILIKE`, `ALTER TABLE` actions, column options, `NULLS FIRST`, the extra join). `Features` also gives the completion of command arguments, command lines, and SELECT statements of the command line, the plan (`PlanSyntax`: the `EXPLAIN` texts and the `PlanFormat` of the answer), the diagram queries, the AI language line and comment query, and the `Engine`, which names the mark of the icon set. Long per-dialect code, such as a plan reader or the Kafka line completion, can stay in its feature module as a function. The dialect file chooses it.
-- The schema compare, the DDL of an object (`definition`), and the data edit have many small differences, so the dialect file chooses a `dialect::Family` (`Postgres`, `MySql`, or `Sqlite`), and these modules match on the family. A dialect like MySQL takes an existing family. A new family needs a new arm in each `match` on `Family`, and the compiler shows each one. A source without a family (DuckDB, Redis, Kafka, Databricks) has no compare queries, no DDL, and no data edit.
+- The schema compare, the DDL of an object (`definition`), and the data edit have many small differences, so the dialect file chooses a `dialect::Family` (`Postgres`, `MySql`, or `Sqlite`), and these modules match on the family. A dialect like MySQL takes an existing family. A new family needs a new arm in each `match` on `Family`, and the compiler shows each one. A source without a family (DuckDB, Redis, Kafka, Databricks, ClickHouse) has no compare queries, no DDL, and no data edit. libSQL uses the `Sqlite` dialect, so it takes the `Sqlite` family.
 - The traits have no default methods. The compiler shows each item that a new dialect must decide.
 - Code outside these modules reads the rules and does not compare `Dialect` values. The exception is the command-line paths of Redis and Kafka, which use `Dialect::is_command_line`.
 
@@ -698,6 +707,7 @@ No scope receives `password`. The plain-text authorized password stays in `crede
     "keyboardMode": "conventional",
     "pageSize": 100,
     "rowCap": 1000,
+    "maxScan": 100000,
     "capInSql": true,
     "gridBudgetBytes": 268435456,
     "undoLimitBytes": 67108864,
@@ -753,16 +763,17 @@ No scope receives `password`. The plain-text authorized password stays in `crede
 
 | Field | Values |
 |---|---|
-| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, or `databricks` |
+| `kind` | `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, `databricks`, `clickhouse`, or `libsql` |
 | `credential` | `vault`, `session`, `globalPlainText`, or `none` |
 | `tls.mode` | `verify` or `disabled` |
 | `theme` | Optional. A value of `theme` of `preferences`. Without the field, the connection uses the default theme |
 | `icon` | Optional. `warning`, `skull`, `radiation`, `flag`, `crown`, `flask`, `star`, `diamond`, `tools`, `gear`, `home`, `heart`, `snowflake`, or `check`. Without the field, the connection uses the database icon |
 | `folder` | Optional. The folder of the connection in the explorer, without spaces at the ends and without control characters. The order of `connections` is the order of the explorer |
-| `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all. Kafka refuses the field |
+| `schemas` | Optional. The schemas, or the Redis databases, that the catalog keeps. The current schema always stays. Without the field, or with an empty list, the catalog keeps all. Kafka and libSQL refuse the field |
 | `sasl` | Optional, only for `kafka`. `plain`, `scram-sha-256`, or `scram-sha-512`. Without the field, a Kafka user uses `scram-sha-512` |
 | `schemaRegistry` | Optional, only for `kafka`. `url` (`http://` or `https://`) and an optional `username`. The password stays in the system vault or in the session |
 | `consumerGroup` | Optional, only for `kafka`. The `group.id` of the reads, without spaces or control characters. Without the field, the reads use `sqln-read`. SQLN never joins the group and never commits |
+| `maxScan` | Optional, only for `kafka`. A number greater than 0: the `SCAN` that SQLN adds to a read without its own `SCAN`, from a console or an MCP agent. Without the field, the read gets `maxScan` of the preferences, 100000 by default |
 | `warehouse` | Required for `databricks`, and refused for other kinds. The SQL warehouse id, with only ASCII letters and digits. `host` is the workspace host, `database` is the optional start catalog, and the token is the password |
 | `topics` | Optional, only for `kafka`. A list of topic patterns that the catalog shows: `*` matches any text, and `!` at the start removes topics. Without the field, or with an empty list, the catalog shows all topics. Reads of other topics still run |
 

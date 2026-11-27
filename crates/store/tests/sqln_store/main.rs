@@ -2,6 +2,8 @@
 // Root of the test binary of sqln-store: script files and credentials. Each file in this
 // folder is a mod below; scripts/check-test-files.sh enforces it.
 
+mod config_file;
+mod connection_options;
 mod credentials;
 mod external_file;
 mod script_file;

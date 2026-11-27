@@ -11,7 +11,7 @@ use sqln_runtime::exec::{
     StatementStatus,
 };
 use sqln_session::connector::sqlite::SqliteTarget;
-use sqln_session::connector::{TransactionCommand, TransactionState};
+use sqln_session::connector::{Fix, TransactionCommand, TransactionState};
 use sqln_testkit::temp_db;
 use tokio::sync::mpsc::Receiver;
 
@@ -38,8 +38,12 @@ struct Run {
     /// The `LIMIT` that each statement received from SQLN.
     added_limits: Vec<usize>,
     error_offsets: Vec<Option<usize>>,
+    /// The configuration fix of each statement end.
+    fixes: Vec<Option<Fix>>,
     end: Option<ExecutionEnd>,
     message: Option<String>,
+    /// The configuration fix of the execution failure.
+    fix: Option<Fix>,
     transaction: Option<TransactionState>,
     confirm_close: bool,
 }
@@ -92,9 +96,11 @@ impl Harness {
                     status,
                     end,
                     error_offset,
+                    fix,
                     ..
                 } => {
                     run.error_offsets.push(error_offset);
+                    run.fixes.push(fix);
                     run.statuses.push(status);
                     run.limits
                         .push(end.map_or(ReadLimit::None, |end| end.limit));
@@ -106,10 +112,12 @@ impl Harness {
                     execution: finished,
                     end,
                     message,
+                    fix,
                     ..
                 } if finished == execution => {
                     run.end = Some(end);
                     run.message = message;
+                    run.fix = fix;
                     return run;
                 }
                 _ => {}
@@ -423,6 +431,7 @@ fn the_time_limit_applies_per_statement_and_stops_the_script() {
         [StatementStatus::Timeout, StatementStatus::NotExecuted]
     );
     assert_eq!(run.end, Some(ExecutionEnd::TimedOut));
+    assert_eq!(run.fixes, [Some(Fix::SqlTimeout), None]);
     assert_eq!(
         h.cell("SELECT 1").get(0).unwrap(),
         number("1"),
@@ -676,11 +685,41 @@ fn read_only_applies_at_each_reservation() {
             matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("readonly")),
             "{run:?}"
         );
+        // The setting of the connection refused the write, so the user can change it.
+        assert_eq!(run.fixes, [Some(Fix::ReadOnly)]);
     }
     assert_eq!(
         h.cell("SELECT count(*) FROM t").get(0).unwrap(),
         number("0")
     );
+}
+
+#[test]
+fn a_connection_change_during_an_execution_acts_from_the_next_one() {
+    let path = temp_db!("rebind-busy");
+    let mut h = Harness::with_path(&path, Settings::default());
+    h.run(&["CREATE TABLE t(a)"]);
+    let execution = h.manager.run(
+        h.console,
+        vec![HUGE_COUNT.to_owned()],
+        RunOptions::default(),
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    let mut target = SqliteTarget::new(&path);
+    target.busy_timeout = Duration::from_millis(100);
+    let read_only = Settings {
+        read_only: true,
+        ..Settings::default()
+    };
+    h.manager.replace_connection(
+        h.connection,
+        Arc::new(SqliteConnector::new(target)),
+        read_only,
+    );
+    h.manager.stop(h.console);
+    assert_eq!(h.collect(execution).end, Some(ExecutionEnd::Stopped));
+    let run = h.run(&["INSERT INTO t VALUES (1)"]);
+    assert_eq!(run.fixes, [Some(Fix::ReadOnly)], "{run:?}");
 }
 
 #[test]
@@ -699,6 +738,7 @@ fn a_locked_database_shows_an_error_after_the_lock_time_limit() {
         matches!(&run.statuses[0], StatementStatus::Error(message) if message.contains("locked")),
         "{run:?}"
     );
+    assert_eq!(run.fixes, [Some(Fix::LockLimit)]);
 }
 
 #[test]
@@ -972,4 +1012,63 @@ fn a_failed_write_ends_the_read() {
     let run = h.collect(execution);
     assert_eq!(writer.rows(), 0);
     assert_ne!(run.end, Some(ExecutionEnd::TimedOut), "{run:?}");
+}
+
+#[test]
+fn a_read_only_refusal_without_the_setting_names_the_database() {
+    let mut h = Harness::open("read-only-database", Settings::default());
+    let run = h.run(&[
+        "CREATE TABLE t(a)",
+        "PRAGMA query_only = ON",
+        "INSERT INTO t VALUES (1)",
+    ]);
+    assert!(
+        matches!(&run.statuses[2], StatementStatus::Error(_)),
+        "{run:?}"
+    );
+    assert_eq!(run.fixes, [None, None, Some(Fix::ServerReadOnly)]);
+}
+
+#[test]
+fn a_file_that_does_not_open_asks_for_the_file() {
+    let folder = temp_db!("missing-folder");
+    let mut h = Harness::with_path(
+        &folder.join("absent").join("db.sqlite"),
+        Settings::default(),
+    );
+    let run = h.run(&["SELECT 1"]);
+    assert_eq!(run.end, Some(ExecutionEnd::Failed), "{run:?}");
+    assert_eq!(run.fix, Some(Fix::File), "{run:?}");
+}
+
+#[test]
+fn an_error_without_a_known_cause_has_no_fix() {
+    let mut h = Harness::open("no-fix", Settings::default());
+    let run = h.run(&["SELECT * FROM missing"]);
+    assert!(
+        matches!(&run.statuses[0], StatementStatus::Error(_)),
+        "{run:?}"
+    );
+    assert_eq!(run.fixes, [None]);
+    assert_eq!(run.fix, None);
+}
+
+#[test]
+fn a_catalog_failure_holds_its_fix_after_the_message() {
+    // A folder in the place of the file: SQLite cannot open it.
+    let path = temp_db!("catalog-fix");
+    std::fs::create_dir_all(&path).unwrap();
+    let mut h = Harness::with_path(&path, Settings::default());
+    h.manager.load_catalog(h.connection, 0, Vec::new());
+    let message = loop {
+        if let ExecEvent::CatalogLoaded { catalog, .. } = h.next() {
+            break catalog.expect_err("a folder is not a database");
+        }
+    };
+    let hint = Fix::File.hint();
+    assert!(message.ends_with(&format!(" {hint}")), "{message}");
+    assert!(
+        !message.contains('\n'),
+        "the status bar has one line: {message}"
+    );
 }

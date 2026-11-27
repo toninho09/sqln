@@ -4,6 +4,7 @@ use super::artifact::{diagram_bytes, diagram_value};
 use super::*;
 use crate::app::auth::Use;
 use crate::catalog::{ObjectKind, RelationRef};
+use crate::connector::{Failure, Fix};
 use crate::exec::{AgentMetadata, ExecEvent, ExecutionEnd, MetadataRead, StatementStatus};
 use crate::sql::{Dialect, split};
 use crate::ui::text;
@@ -147,6 +148,7 @@ impl App {
                 session: session.into(),
                 state: "ready",
                 message: None,
+                fix: None,
                 cancel,
                 consoles,
                 connections,
@@ -157,6 +159,8 @@ impl App {
                 artifact: None,
                 results: Vec::new(),
                 statements: Vec::new(),
+                notices: Vec::new(),
+                default_scan: None,
                 rows: rows_of(None),
                 serial: self.agent.serial,
                 created: Instant::now(),
@@ -176,7 +180,15 @@ impl App {
     ) -> Reply {
         let index = self.agent_target(console)?;
         let connection = self.tabs.consoles[index].connection.ok_or_else(missing)?;
-        let dialect = self.connection(connection).ok_or_else(missing)?.dialect;
+        let item = self.connection(connection).ok_or_else(missing)?;
+        let dialect = item.dialect;
+        // The connection value wins over Max scan of the settings.
+        let scan = item
+            .definition
+            .as_ref()
+            .map_or(self.settings.max_scan, |definition| {
+                definition.settings(&self.settings).max_scan
+            });
         let total = draft.plan.statements.iter().map(String::len).sum::<usize>();
         if total > agent::MAX_FRAME {
             return Err(Error::new(
@@ -231,7 +243,23 @@ impl App {
                     } else {
                         Ok(())
                     };
-                    let result = checked.map(|()| raw.is_some().then_some(statements));
+                    // A read without a bound gets one, at each access level.
+                    let result = checked.map(|()| {
+                        let features = crate::dialect::features(dialect);
+                        let mut bounded = false;
+                        let statements: Vec<_> = statements
+                            .into_iter()
+                            .map(|sql| match features.default_bound(&sql, scan) {
+                                Some(sql) => {
+                                    bounded = true;
+                                    sql
+                                }
+                                None => sql,
+                            })
+                            .collect();
+                        let scan = bounded.then_some(scan);
+                        ((raw.is_some() || bounded).then_some(statements), scan)
+                    });
                     let _ = sender.send(Work::Validated(key, result));
                 });
         }
@@ -529,6 +557,19 @@ impl App {
     pub(in crate::app) fn fail_agent_job(&mut self, id: &str, message: &str) {
         self.terminate_agent_job(id, "failed", message);
     }
+
+    /// Fails a job with a failure that can have a configuration fix.
+    pub(in crate::app) fn fail_agent_job_with(&mut self, id: &str, failure: &Failure) {
+        let open = self
+            .agent
+            .jobs
+            .get(id)
+            .is_some_and(|job| !finished(job.state));
+        self.fail_agent_job(id, &failure.message);
+        if let Some(job) = self.agent.jobs.get_mut(id).filter(|_| open) {
+            job.fix = failure.fix;
+        }
+    }
     pub(super) fn terminate_agent_job(&mut self, id: &str, state: &'static str, message: &str) {
         let Some(job) = self.agent.jobs.get_mut(id) else {
             return;
@@ -543,6 +584,8 @@ impl App {
         let connection = job.connections[0].0;
         job.state = state;
         job.message = Some(message.into());
+        // A fix of an earlier statement does not describe this end.
+        job.fix = None;
         job.cancel.cancel();
         let cancel = job.cancel.clone();
         job.draft = None;
@@ -658,12 +701,33 @@ pub(super) fn task_kind(output: &Output) -> &'static str {
 
 /// The statement ends that a task keeps for its reply.
 const STATEMENTS: usize = 100;
+/// The notices that one statement keeps for the reply, and their bytes.
+const NOTICES: usize = 10;
+const NOTICE_BYTES: usize = 2048;
 
-/// Writes the end of one statement: its state, and its rows or changed rows.
+/// Keeps a database notice for the end of its statement, within `NOTICES` and
+/// `NOTICE_BYTES`. The text goes only to the agent, never to a diagnostic log.
+pub(super) fn keep_notice(notices: &mut Vec<String>, text: &str) {
+    let used: usize = notices.iter().map(String::len).sum();
+    if notices.len() >= NOTICES || used >= NOTICE_BYTES {
+        return;
+    }
+    let text = crate::grid::printable(text);
+    let mut end = text.len().min(NOTICE_BYTES - used);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    notices.push(text[..end].to_owned());
+}
+
+/// Writes the end of one statement: its state, its rows or changed rows, the limit
+/// that stopped its read, and its notices.
 fn statement_value(
     index: usize,
     status: &StatementStatus,
     end: Option<&crate::connector::StatementEnd>,
+    notices: Vec<String>,
+    fix: Option<Fix>,
 ) -> Value {
     let state = match status {
         StatementStatus::Running => "running",
@@ -678,6 +742,9 @@ fn statement_value(
     if let StatementStatus::Error(message) = status {
         value["error"] = json!(crate::grid::printable(message));
     }
+    if let Some(fix) = fix {
+        value["fix"] = json!(fix.hint());
+    }
     if let Some(end) = end {
         if end.has_columns {
             value["rows"] = json!(end.rows);
@@ -685,6 +752,19 @@ fn statement_value(
         if let Some(changed) = end.changed {
             value["changed_rows"] = json!(changed);
         }
+        // The grid kept only part of the rows: the agent must not read them as all rows.
+        let limit = match end.limit {
+            crate::sink::ReadLimit::None => None,
+            crate::sink::ReadLimit::RowCap => Some("row_cap"),
+            crate::sink::ReadLimit::Budget => Some("memory_budget"),
+            crate::sink::ReadLimit::ValueTooLarge => Some("value_too_large"),
+        };
+        if let Some(limit) = limit {
+            value["limit"] = json!(limit);
+        }
+    }
+    if !notices.is_empty() {
+        value["notices"] = json!(notices);
     }
     value
 }

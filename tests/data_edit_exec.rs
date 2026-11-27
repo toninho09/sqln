@@ -276,6 +276,50 @@ fn network_updates_preserve_values_reject_conflicts_and_accept_mysql_no_ops() {
 }
 
 #[test]
+fn libsql_grid_edits_apply_in_one_transaction_and_reject_conflicts() {
+    let Ok(uri) = std::env::var("SQLN_TEST_LIBSQL") else {
+        println!("skipped: SQLN_TEST_LIBSQL is not set");
+        return;
+    };
+    let mut h = Harness::new(
+        network_connector(parse_uri(&uri).unwrap()),
+        Settings::default(),
+    );
+    let table = "sqln_grid_edit_libsql";
+    h.query(&format!("DROP TABLE IF EXISTS {table}"));
+    h.query(&format!(
+        "CREATE TABLE {table} (id INTEGER PRIMARY KEY, value TEXT)"
+    ));
+    h.query(&format!(
+        "INSERT INTO {table} VALUES (1, 'old'), (2, 'second')"
+    ));
+    let metadata = h.metadata("main", table);
+    let select = format!("SELECT * FROM {table} ORDER BY id");
+    let rows = h.query(&select);
+    let patch = h.patch(&rows[0], 1, Value::Text("new"));
+    let changes = vec![h.update(patch), h.insert(&[0, 1], &["3", "made"])];
+    assert!(matches!(
+        h.edit(Job::Apply {
+            metadata: metadata.clone(),
+            changes
+        })
+        .unwrap(),
+        Outcome::Applied
+    ));
+    let rows = h.query(&select);
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].text(1).as_deref(), Some("new"));
+    assert_eq!(rows[2].text(1).as_deref(), Some("made"));
+    let changes = vec![h.delete(&rows[1])];
+    h.query(&format!("UPDATE {table} SET value = 'theirs' WHERE id = 2"));
+    let error = h.edit(Job::Apply { metadata, changes }).unwrap_err();
+    assert_eq!(error.message, text::EDIT_CONFLICT);
+    assert_eq!(h.query(&select).len(), 3);
+    h.query(&format!("DROP TABLE {table}"));
+    h.manager.shutdown();
+}
+
+#[test]
 fn mysql_tables_without_transactional_storage_refuse_grid_editing() {
     let Ok(uri) = std::env::var("SQLN_TEST_MYSQL") else {
         println!("skipped: SQLN_TEST_MYSQL is not set");

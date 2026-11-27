@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::KeyEvent;
 
 use crate::command_log::{CommandState, History};
-use crate::connector::{StatementEnd, TransactionCommand, TransactionState};
+use crate::connector::{Failure, StatementEnd, TransactionCommand, TransactionState};
 use crate::editor::{KeyboardMode, MarkState, RunPlan, SqlEditor};
 use crate::exec::{
     ConnectionId, ConsoleId, ExecEvent, ExecutionEnd, ExecutionId, ProgressSnapshot, ReadEnd,
@@ -530,16 +530,21 @@ impl Console {
             ExecEvent::Columns {
                 key,
                 columns,
+                types,
                 live,
                 progress,
             } if self.is_current(key.execution) => {
                 self.on_columns(key, columns, live, progress.map(ReadMeter::new), budget);
+                if let Some(result) = self.filling_mut() {
+                    result.column_types = types;
+                }
             }
             ExecEvent::Rows { key, rows, bytes } => self.on_rows(key, rows, bytes, budget),
             ExecEvent::ResultDone { key, rows, limit } if self.is_current(key.execution) => {
                 self.reading = false;
                 if let Some(result) = self.filling_mut() {
                     let progress = result.progress.take().map(|meter| meter.snapshot());
+                    result.read = progress;
                     result.summary = match (result.live, progress) {
                         (Some(_), None) => {
                             text::live_rows_done(result.table.rows.len(), result.dropped)
@@ -579,14 +584,24 @@ impl Console {
                 let message = text::statement_error(key.index, &text::limit_added(rows));
                 self.push_message(MessageLevel::Info, message);
             }
+            ExecEvent::ScanAdded { key, scan } if self.is_current(key.execution) => {
+                self.message_key = Some(key);
+                let message = text::statement_error(key.index, &text::scan_added(scan));
+                self.push_message(MessageLevel::Info, message);
+            }
             ExecEvent::StatementFinished {
                 key,
                 status,
                 end,
                 error_offset,
+                fix,
             } if self.is_current(key.execution) => {
                 self.message_key = Some(key);
                 self.on_statement_finished(key.index, status, end, budget);
+                // The hint is the next line of the error, in the same entry of Messages.
+                if let Some(fix) = fix {
+                    self.push_message(MessageLevel::Info, fix.hint());
+                }
                 if let Some(offset) = error_offset {
                     let prefix = self.explain.map_or(0, |explain| explain.prefix_len());
                     self.editor
@@ -600,9 +615,11 @@ impl Console {
                 execution,
                 end,
                 message,
+                fix,
                 ..
             } if self.is_current(execution) => {
                 self.message_key = None;
+                let message = message.map(|message| Failure::new(message, fix).two_lines());
                 return Some(self.on_execution_finished(end, message, budget));
             }
             ExecEvent::TransactionChanged { state, .. } => {

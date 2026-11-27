@@ -74,4 +74,12 @@ impl Features for DuckDb {
     fn family(&self) -> Option<Family> {
         None
     }
+
+    fn default_bound(&self, _: &str, _: u64) -> Option<String> {
+        None
+    }
+
+    fn agent_name(&self) -> &'static str {
+        "DuckDb"
+    }
 }

@@ -11,7 +11,7 @@ use rdkafka::consumer::{BaseConsumer, Consumer as _, ConsumerContext, StreamCons
 use rdkafka::error::{KafkaError, RDKafkaErrorCode};
 
 use crate::connector::target::{Address, NetworkTarget, Tls};
-use crate::connector::{ConnectError, ExecError, describe, tls};
+use crate::connector::{ConnectError, ExecError, Fix, describe, tls};
 use crate::text;
 
 /// A call to the cluster that gets no answer in this time fails.
@@ -24,10 +24,12 @@ pub struct Context {
     last_error: Mutex<Option<String>>,
     /// A refused password. Later errors, such as "all brokers down", do not hide it.
     refusal: Mutex<Option<String>>,
+    /// The first error code with a known fix, such as a host that does not resolve.
+    fix: Mutex<Option<Fix>>,
 }
 
 impl Context {
-    fn take(slot: &Mutex<Option<String>>) -> Option<String> {
+    fn take<T>(slot: &Mutex<Option<T>>) -> Option<T> {
         slot.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
@@ -38,6 +40,12 @@ impl ClientContext for Context {
     fn log(&self, _level: RDKafkaLogLevel, _facility: &str, _message: &str) {}
 
     fn error(&self, error: KafkaError, reason: &str) {
+        if let Some(fix) = error.rdkafka_error_code().and_then(code_fix) {
+            self.fix
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get_or_insert(fix);
+        }
         let slot = if is_refusal(error.rdkafka_error_code()) {
             &self.refusal
         } else {
@@ -105,11 +113,14 @@ pub fn config(target: &NetworkTarget, group: &str) -> Result<ClientConfig, Conne
         .set("allow.auto.create.topics", "false")
         .set_log_level(RDKafkaLogLevel::Emerg);
     let sasl = !target.user.is_empty();
-    let protocol = match (&target.tls, sasl) {
-        (Tls::Disabled, false) => "plaintext",
-        (Tls::Disabled, true) => "sasl_plaintext",
+    // librdkafka gives no clear signal of a broker without TLS, so the automatic mode
+    // uses only its first attempt.
+    let tls = target.tls.first_try(&target.address);
+    let protocol = match (&tls, sasl) {
         (Tls::Verify(_), false) => "ssl",
         (Tls::Verify(_), true) => "sasl_ssl",
+        (_, false) => "plaintext",
+        (_, true) => "sasl_plaintext",
     };
     config.set("security.protocol", protocol);
     if sasl {
@@ -124,7 +135,7 @@ pub fn config(target: &NetworkTarget, group: &str) -> Result<ClientConfig, Conne
                     .map_or("", |password| password.expose()),
             );
     }
-    if let Tls::Verify(files) = &target.tls {
+    if let Tls::Verify(files) = &tls {
         config.set("ssl.endpoint.identification.algorithm", "https");
         match &files.ca {
             Some(ca) => config.set("ssl.ca.location", path_text(ca)?),
@@ -155,6 +166,17 @@ pub fn reader(config: &ClientConfig) -> Result<Reader, ExecError> {
         .map_err(|error| ExecError::new(describe(&error)))
 }
 
+/// The configuration that can correct an error code of librdkafka.
+fn code_fix(code: RDKafkaErrorCode) -> Option<Fix> {
+    match code {
+        RDKafkaErrorCode::Resolve => Some(Fix::Host),
+        RDKafkaErrorCode::AllBrokersDown | RDKafkaErrorCode::BrokerTransportFailure => {
+            Some(Fix::Port)
+        }
+        _ => None,
+    }
+}
+
 fn is_refusal(code: Option<RDKafkaErrorCode>) -> bool {
     matches!(
         code,
@@ -162,12 +184,14 @@ fn is_refusal(code: Option<RDKafkaErrorCode>) -> bool {
     )
 }
 
-/// Describes a failed call. The last error of the client often holds the real reason,
-/// such as a refused password, when the call only reports a time limit.
-pub fn call_error(consumer: &Consumer, error: &KafkaError) -> (bool, String) {
+/// Describes a failed call: a refused password, the text, and the fix of an error code.
+/// The last error of the client often holds the real reason, such as a refused
+/// password, when the call only reports a time limit.
+pub fn call_error(consumer: &Consumer, error: &KafkaError) -> (bool, String, Option<Fix>) {
     let context = consumer.context();
     let mut refusal = Context::take(&context.refusal);
     let mut last = Context::take(&context.last_error);
+    let mut fix = Context::take(&context.fix);
     // A consumer receives the errors of its brokers as events of its queue. A consumer
     // without partitions has only these events in the queue.
     for _ in 0..32 {
@@ -177,6 +201,9 @@ pub fn call_error(consumer: &Consumer, error: &KafkaError) -> (bool, String) {
             }
             Some(Err(event)) => {
                 last.get_or_insert_with(|| describe(&event));
+                if fix.is_none() {
+                    fix = event.rdkafka_error_code().and_then(code_fix);
+                }
             }
             Some(Ok(_)) => {}
             None => break,
@@ -189,7 +216,8 @@ pub fn call_error(consumer: &Consumer, error: &KafkaError) -> (bool, String) {
         }
         _ => describe(error),
     };
-    (refused, text)
+    let fix = fix.or_else(|| error.rdkafka_error_code().and_then(code_fix));
+    (refused, text, fix.filter(|_| !refused))
 }
 
 /// Runs a call of librdkafka that waits, on a thread for blocking work.
@@ -203,4 +231,22 @@ pub async fn blocking<T: Send + 'static>(
     })
     .await
     .map_err(|_| ExecError::new(text::KAFKA_CALL_FAILED))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_codes_give_their_fix() {
+        let cases = [
+            (RDKafkaErrorCode::Resolve, Some(Fix::Host)),
+            (RDKafkaErrorCode::AllBrokersDown, Some(Fix::Port)),
+            (RDKafkaErrorCode::BrokerTransportFailure, Some(Fix::Port)),
+            (RDKafkaErrorCode::SaslAuthenticationFailed, None),
+        ];
+        for (code, fix) in cases {
+            assert_eq!(code_fix(code), fix, "{code:?}");
+        }
+    }
 }

@@ -608,6 +608,9 @@ impl App {
         match tab.result.edits.discard(&mut tab.result.table, &budget) {
             Err(reason) => self.status = Some(reason),
             Ok(()) => {
+                // The removed rows of an insert can hold the cursor or the selection.
+                let (at, col) = (tab.result.view.row, tab.result.view.col);
+                tab.result.view.move_to(at, col, &tab.result.table, false);
                 tab.result.search = None;
                 tab.edit_restore = None;
                 let reload = tab.edit_uncertain;

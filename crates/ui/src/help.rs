@@ -10,12 +10,21 @@ use crate::ui::which_key::KeyGroup;
 /// One topic of the guide. A step is an effective key and a text. An example is a
 /// text and a statement.
 pub struct GuideTopic {
+    /// The heading of the sidebar group of the topic.
+    pub group: &'static str,
     /// The short name in the sidebar.
     pub name: &'static str,
     pub title: &'static str,
     pub intro: &'static str,
     pub steps: Vec<(String, &'static str)>,
     pub examples: &'static [(&'static str, &'static str)],
+}
+
+/// A row of the sidebar: the heading of a group, which is not a page, or a page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidebarRow {
+    Heading(&'static str),
+    Page(usize),
 }
 
 /// The page that the help shows. The sidebar lists the topics, all keys, then each group.
@@ -33,7 +42,7 @@ pub struct Help {
     pub input: LineInput,
     /// The selected row of the sidebar.
     pub page: usize,
-    /// The first visible row of the sidebar.
+    /// The first visible row of the sidebar, headings included.
     pub sidebar_first: usize,
     pub scroll: usize,
     pub visible_rows: usize,
@@ -67,8 +76,12 @@ impl Help {
     }
 
     pub fn view(&self) -> View {
+        self.view_of(self.page)
+    }
+
+    fn view_of(&self, page: usize) -> View {
         let topics = self.guide.len();
-        match self.page {
+        match page {
             page if page < topics => View::Topic(page),
             page if page == topics => View::All,
             page => View::Group(page - topics - 1),
@@ -85,25 +98,51 @@ impl Help {
             .collect()
     }
 
-    /// Returns the first visible row of the sidebar. The sidebar scrolls the
-    /// minimum number of rows that keeps the open page in view.
-    pub fn sidebar_window(&mut self, rows: usize) -> usize {
-        let total = self.guide.len() + self.groups.len() + 1;
-        self.sidebar_first = self.sidebar_first.min(total.saturating_sub(rows));
-        if self.page < self.sidebar_first {
-            self.sidebar_first = self.page;
+    fn page_count(&self) -> usize {
+        self.guide.len() + self.groups.len() + 1
+    }
+
+    /// Returns the rows of the sidebar: a heading before each group of topics, and
+    /// the key heading before all keys and the key groups.
+    pub fn sidebar_rows(&self) -> Vec<SidebarRow> {
+        let mut rows = Vec::new();
+        for (page, topic) in self.guide.iter().enumerate() {
+            if page == 0 || self.guide[page - 1].group != topic.group {
+                rows.push(SidebarRow::Heading(topic.group));
+            }
+            rows.push(SidebarRow::Page(page));
         }
-        self.sidebar_first = if self.page >= self.sidebar_first + rows {
-            self.page + 1 - rows
-        } else {
-            self.sidebar_first
+        rows.push(SidebarRow::Heading(text::HELP_KEYS));
+        rows.extend((self.guide.len()..self.page_count()).map(SidebarRow::Page));
+        rows
+    }
+
+    /// Returns the first visible row of the sidebar. The sidebar scrolls the
+    /// minimum number of rows that keeps the open page in view. When the window
+    /// moves up to the first page of a group, the heading of the group shows too.
+    pub fn sidebar_window(&mut self, rows: usize) -> usize {
+        let all = self.sidebar_rows();
+        let open = all
+            .iter()
+            .position(|row| *row == SidebarRow::Page(self.page))
+            .unwrap_or(0);
+        let top = match open.checked_sub(1).map(|row| all[row]) {
+            Some(SidebarRow::Heading(_)) => open - 1,
+            _ => open,
         };
+        self.sidebar_first = self.sidebar_first.min(all.len().saturating_sub(rows));
+        if top < self.sidebar_first {
+            self.sidebar_first = top;
+        }
+        if open >= self.sidebar_first + rows {
+            self.sidebar_first = open + 1 - rows;
+        }
         self.sidebar_first
     }
 
     /// Opens a page of the sidebar. The filter stays.
     pub fn open_page(&mut self, page: usize) {
-        if page < self.guide.len() + self.groups.len() + 1 {
+        if page < self.page_count() {
             self.page = page;
             self.scroll = 0;
         }
@@ -111,7 +150,12 @@ impl Help {
 
     /// Returns the text of the visible page for the clipboard.
     pub fn text(&self) -> String {
-        match self.view() {
+        self.page_text(self.page)
+    }
+
+    /// Returns the text of a page, without the filter.
+    pub fn page_text(&self, page: usize) -> String {
+        match self.view_of(page) {
             View::Topic(index) => {
                 let topic = &self.guide[index];
                 let examples = topic
@@ -186,7 +230,7 @@ impl Help {
             KeyCode::Home if ctrl => self.scroll = 0,
             KeyCode::End if ctrl => self.scroll = usize::MAX,
             KeyCode::Tab | KeyCode::BackTab => {
-                let count = self.guide.len() + self.groups.len() + 1;
+                let count = self.page_count();
                 let previous =
                     key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
                 self.open_page(if previous {

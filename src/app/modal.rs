@@ -73,6 +73,8 @@ pub(super) struct Modals {
     /// The file browser of the focused path field in a dialog or in the form.
     pub(super) browser: Option<FileBrowser>,
     pub(super) settings_form: Option<SettingsForm>,
+    /// The hash of each settings file when the settings window opened.
+    pub(super) settings_hashes: Vec<(crate::store::Scope, Option<u64>)>,
     pub(super) export_form: Option<ExportForm>,
     pub(super) edit_form: Option<crate::edit_form::EditForm>,
     pub(super) import_form: Option<ImportForm>,

@@ -16,7 +16,7 @@ Dated test results below remain historical records, not results for the current 
 - The technical tests ran before the implementation. [docs/RESULTS.md](RESULTS.md) records their results: 109 tests passed with real databases.
 - The local Git repository exists.
 - The product implementation was authorized on 2026-10-30.
-- The application works with SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka, and Databricks, with several consoles and several connections.
+- The application works with SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka, Databricks, ClickHouse, and libSQL, with several consoles and several connections.
 - The navigator, the tabs, the dividers, the key map, and the connection form exist.
 - The table view exists, with pages, the `WHERE` and `ORDER BY` bar, sorting, and stop.
 - The configuration and the saving exist: global and project `config.json`, automatic saving of the consoles, and reopening.
@@ -391,6 +391,8 @@ See [DECISIONS](DECISIONS.md), "SQLite in memory".
 
 **Defined:** support the PostgreSQL and MySQL versions still supported by the vendor.
 Treat MariaDB as best effort, through the MySQL connector.
+**Defined — 2026-11-27:** CockroachDB, YugabyteDB, and TiDB are also best effort, through the
+PostgreSQL and MySQL connectors. See [DECISIONS](DECISIONS.md), "Compatible servers".
 
 Prepare the structure for sources other than relational databases:
 

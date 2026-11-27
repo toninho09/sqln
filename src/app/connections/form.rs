@@ -23,7 +23,7 @@ impl App {
         }
     }
 
-    pub(super) fn edit_connection(&mut self, id: ConnectionId) {
+    pub(in crate::app) fn edit_connection(&mut self, id: ConnectionId) {
         let Some(definition) = self
             .connection(id)
             .and_then(|item| item.definition.as_ref())
@@ -289,7 +289,7 @@ impl App {
             Ok(None) => Some(FormNote::Success(text::FORM_TEST_OK.to_owned())),
             Err(error) => {
                 form.close_schema_list();
-                Some(FormNote::Error(error.message))
+                Some(FormNote::Error(error.into()))
             }
         };
     }
@@ -299,7 +299,7 @@ impl App {
             return;
         };
         if let Some(console) = self.console_in_use(id) {
-            let note = FormNote::Error(text::connection_in_use(&console));
+            let note = FormNote::Error(text::connection_in_use(&console).into());
             if let Some(form) = &mut self.modals.form {
                 form.note = Some(note);
             }
@@ -412,7 +412,7 @@ impl App {
 
     pub(super) fn set_form_error(&mut self, message: String) {
         if let Some(form) = &mut self.modals.form {
-            form.note = Some(FormNote::Error(message));
+            form.note = Some(FormNote::Error(message.into()));
         }
     }
 
@@ -420,7 +420,7 @@ impl App {
     pub(super) fn show_invalid(&mut self, invalid: Invalid) {
         if let Some(form) = &mut self.modals.form {
             form.focus_on(invalid.field);
-            form.note = Some(FormNote::Error(invalid.message));
+            form.note = Some(FormNote::Error(invalid.message.into()));
         }
     }
 

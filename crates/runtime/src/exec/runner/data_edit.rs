@@ -167,7 +167,8 @@ impl ConsoleTask {
             return;
         };
         self.emit(ExecEvent::Started { console, execution }).await;
-        self.transaction = TransactionState::None;
+        // The interface leaves an unknown state only after an event.
+        self.set_transaction(TransactionState::None).await;
         let applying = matches!(&job, Job::Apply { .. });
         let mut key = StatementKey {
             console,

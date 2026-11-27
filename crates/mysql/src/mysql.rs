@@ -5,16 +5,18 @@ use std::thread;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use mysql_async::consts::{ColumnType, StatusFlags};
+use mysql_async::consts::{ColumnFlags, ColumnType, StatusFlags};
 use mysql_async::prelude::Queryable;
 use mysql_async::{ClientIdentity, Column, Conn, Error as DriverError, Opts, OptsBuilder, SslOpts};
 use tokio::time::timeout;
 
+use super::auto_tls::AutoTls;
+use super::fix::network_fix;
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
-    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
-    describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, Fix, MAX_NOTICES,
+    Namespace, ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
+    TransactionState, describe, tls,
 };
 use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
@@ -31,21 +33,26 @@ const BINARY_CHARSET: u16 = 63;
 const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 /// A statement with no effect. Its answer has the state of the transaction.
 const STATUS_REQUEST: &str = "DO 0";
-const CATALOG_SQL: &str = "\
-    SELECT s.SCHEMA_NAME, t.TABLE_NAME, t.TABLE_TYPE \
+const CATALOG_SQL: &str = concat!(
+    "SELECT s.SCHEMA_NAME, t.TABLE_NAME, t.TABLE_TYPE \
     FROM information_schema.SCHEMATA s \
     LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME \
-    WHERE s.SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
-    ORDER BY 1, 2";
+    WHERE ",
+    sqln_sql::mysql_user_schemas!("s.SCHEMA_NAME"),
+    " ORDER BY 1, 2"
+);
 /// The routines and triggers of each schema of `CATALOG_SQL`.
-const OBJECTS_SQL: &str = "\
-    SELECT ROUTINE_SCHEMA, ROUTINE_NAME, LOWER(ROUTINE_TYPE), '' \
+const OBJECTS_SQL: &str = concat!(
+    "SELECT ROUTINE_SCHEMA, ROUTINE_NAME, LOWER(ROUTINE_TYPE), '' \
     FROM information_schema.ROUTINES \
-    WHERE ROUTINE_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
-    UNION ALL \
+    WHERE ",
+    sqln_sql::mysql_user_schemas!("ROUTINE_SCHEMA"),
+    " UNION ALL \
     SELECT TRIGGER_SCHEMA, TRIGGER_NAME, 'trigger', EVENT_OBJECT_TABLE \
     FROM information_schema.TRIGGERS \
-    WHERE TRIGGER_SCHEMA NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')";
+    WHERE ",
+    sqln_sql::mysql_user_schemas!("TRIGGER_SCHEMA")
+);
 const COLUMNS_SQL: &str = "\
     SELECT COLUMN_NAME FROM information_schema.COLUMNS \
     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION";
@@ -91,14 +98,53 @@ fn ssl_options(tls_mode: &Tls) -> Result<Option<SslOpts>, ConnectError> {
     Ok(Some(options))
 }
 
+/// `ER_SECURE_TRANSPORT_REQUIRED`: the server refuses a connection without TLS.
+const SECURE_TRANSPORT_REQUIRED: u16 = 3159;
+
 /// Do not write this value in a log: its debug text shows the password.
-fn connect_error(error: &mysql_async::Error) -> ConnectError {
+fn connect_error(error: &mysql_async::Error, address: &Address) -> ConnectError {
     match error {
         // `1045` is a wrong password, and `1698` is an account that needs another one.
         mysql_async::Error::Server(server) if matches!(server.code, 1045 | 1698) => {
             ConnectError::refused_password(describe(error))
         }
-        _ => ConnectError::new(describe(error)).kind(error_kind(error)),
+        mysql_async::Error::Server(server) if server.code == SECURE_TRANSPORT_REQUIRED => {
+            ConnectError::new(describe(error))
+                .kind(error_kind(error))
+                .tls_refused(TlsRefusal::ServerNeedsTls)
+        }
+        // The handshake of the server has no TLS flag.
+        mysql_async::Error::Driver(mysql_async::DriverError::NoClientSslFlagFromServer) => {
+            ConnectError::new(describe(error))
+                .kind(error_kind(error))
+                .tls_refused(TlsRefusal::ServerHasNoTls)
+        }
+        // `1049` is an unknown database. In a statement it is a name of the SQL instead.
+        mysql_async::Error::Server(server) if server.code == 1049 => {
+            ConnectError::new(describe(error))
+                .kind(error_kind(error))
+                .fix(Some(Fix::Database))
+        }
+        mysql_async::Error::Server(server) => ConnectError::new(describe(error))
+            .kind(error_kind(error))
+            .fix(code_fix(server.code)),
+        _ => ConnectError::new(describe(error))
+            .kind(error_kind(error))
+            .fix(network_fix(error, address)),
+    }
+}
+
+/// The configuration that can correct a server error code. See "Server Error Message
+/// Reference" of MySQL. `1130` is a host that the server does not accept, and `1290`
+/// is a server with `read_only`.
+fn code_fix(code: u16) -> Option<Fix> {
+    match code {
+        1130 => Some(Fix::ServerRule),
+        1040 | 1203 => Some(Fix::PoolLimit),
+        1044 | 1142 | 1143 | 1227 => Some(Fix::Privilege),
+        1792 => Some(Fix::ReadOnly),
+        1290 => Some(Fix::ServerReadOnly),
+        _ => None,
     }
 }
 
@@ -125,12 +171,38 @@ fn driver_options(target: &NetworkTarget) -> Result<Opts, ConnectError> {
 
 pub struct MySqlConnector {
     target: NetworkTarget,
+    auto_tls: AutoTls,
 }
 
 impl MySqlConnector {
     pub fn new(target: NetworkTarget) -> Self {
-        Self { target }
+        Self {
+            target,
+            auto_tls: AutoTls::default(),
+        }
     }
+}
+
+/// Opens one session with the resolved TLS mode of `target`.
+async fn connect_once(target: NetworkTarget) -> Result<MySqlSession, ConnectError> {
+    let options = driver_options(&target)?;
+    let conn = Conn::new(options.clone())
+        .await
+        .map_err(|error| connect_error(&error, &target.address))?;
+    let canceller = Arc::new(MySqlCanceller {
+        options,
+        connection: conn.id(),
+    });
+    Ok(MySqlSession {
+        conn: Some(conn),
+        canceller,
+        database: target.database,
+        transaction: TransactionState::None,
+        running: false,
+        status_is_current: true,
+        connect_notice: None,
+        trace: None,
+    })
 }
 
 #[async_trait]
@@ -149,23 +221,9 @@ impl Connector for MySqlConnector {
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
-        let options = driver_options(&self.target)?;
-        let conn = Conn::new(options.clone())
-            .await
-            .map_err(|error| connect_error(&error))?;
-        let canceller = Arc::new(MySqlCanceller {
-            options,
-            connection: conn.id(),
-        });
-        Ok(Box::new(MySqlSession {
-            conn: Some(conn),
-            canceller,
-            database: self.target.database.clone(),
-            transaction: TransactionState::None,
-            running: false,
-            status_is_current: true,
-            trace: None,
-        }))
+        let (mut session, notice) = self.auto_tls.connect(&self.target, connect_once).await?;
+        session.connect_notice = notice;
+        Ok(Box::new(session))
     }
 }
 
@@ -198,6 +256,56 @@ impl Canceller for MySqlCanceller {
             Ok(Err(error)) => Err(describe(&error)),
             Err(_) => Err("The cancel request got no answer.".to_owned()),
         }
+    }
+}
+
+/// The name of the column type for the agent, such as `int unsigned` or `varchar`.
+/// The protocol type has no length, so `varchar(20)` gives `varchar`.
+fn column_type(column: &Column) -> String {
+    use ColumnType::*;
+    let binary = column.character_set() == BINARY_CHARSET;
+    // The server sends an ENUM or SET column as a string column with a flag.
+    let flags = column.flags();
+    let name = match column.column_type() {
+        _ if flags.contains(ColumnFlags::ENUM_FLAG) => "enum",
+        _ if flags.contains(ColumnFlags::SET_FLAG) => "set",
+        MYSQL_TYPE_TINY => "tinyint",
+        MYSQL_TYPE_SHORT => "smallint",
+        MYSQL_TYPE_INT24 => "mediumint",
+        MYSQL_TYPE_LONG => "int",
+        MYSQL_TYPE_LONGLONG => "bigint",
+        MYSQL_TYPE_FLOAT => "float",
+        MYSQL_TYPE_DOUBLE => "double",
+        MYSQL_TYPE_DECIMAL | MYSQL_TYPE_NEWDECIMAL => "decimal",
+        MYSQL_TYPE_YEAR => "year",
+        MYSQL_TYPE_DATE | MYSQL_TYPE_NEWDATE => "date",
+        MYSQL_TYPE_TIME | MYSQL_TYPE_TIME2 => "time",
+        MYSQL_TYPE_DATETIME | MYSQL_TYPE_DATETIME2 => "datetime",
+        MYSQL_TYPE_TIMESTAMP | MYSQL_TYPE_TIMESTAMP2 => "timestamp",
+        MYSQL_TYPE_BIT => "bit",
+        MYSQL_TYPE_JSON => "json",
+        MYSQL_TYPE_ENUM => "enum",
+        MYSQL_TYPE_SET => "set",
+        MYSQL_TYPE_GEOMETRY => "geometry",
+        MYSQL_TYPE_NULL => "null",
+        MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING if binary => "varbinary",
+        MYSQL_TYPE_VARCHAR | MYSQL_TYPE_VAR_STRING => "varchar",
+        MYSQL_TYPE_STRING if binary => "binary",
+        MYSQL_TYPE_STRING => "char",
+        MYSQL_TYPE_TINY_BLOB | MYSQL_TYPE_MEDIUM_BLOB | MYSQL_TYPE_LONG_BLOB | MYSQL_TYPE_BLOB
+            if binary =>
+        {
+            "blob"
+        }
+        MYSQL_TYPE_TINY_BLOB | MYSQL_TYPE_MEDIUM_BLOB | MYSQL_TYPE_LONG_BLOB | MYSQL_TYPE_BLOB => {
+            "text"
+        }
+        _ => "unknown",
+    };
+    if is_number(column) && flags.contains(ColumnFlags::UNSIGNED_FLAG) {
+        format!("{name} unsigned")
+    } else {
+        name.to_owned()
     }
 }
 
@@ -284,7 +392,8 @@ fn exec_error(error: &DriverError, sql: &str) -> ExecError {
             code_kind(server.code),
             format!("{} ({})", server.message, server.code),
         )
-        .at(syntax_offset(&server.message, sql)),
+        .at(syntax_offset(&server.message, sql))
+        .fix(code_fix(server.code)),
         other => ExecError::with_kind(error_kind(other), describe(other)),
     }
 }
@@ -344,6 +453,9 @@ struct MySqlSession {
     running: bool,
     /// False after an error, because an error packet has no transaction state.
     status_is_current: bool,
+    /// The notice of the connection, such as a fallback to no TLS. The first statement
+    /// shows it in **Messages**.
+    connect_notice: Option<&'static str>,
 }
 
 impl MySqlSession {
@@ -444,7 +556,11 @@ impl MySqlSession {
                     .iter()
                     .map(|column| column.name_str().into_owned())
                     .collect();
-                sink.set_columns(names).await;
+                let types = columns
+                    .iter()
+                    .map(|column| Some(column_type(column)))
+                    .collect();
+                sink.set_typed_columns(names, types).await;
             }
             let mut storing = true;
             let mut writer = RowWriter::default();
@@ -748,6 +864,9 @@ impl MySqlSession {
         read: Result<Outcome, ExecError>,
         mut sink: ResultSink,
     ) -> Result<StatementEnd, ExecError> {
+        if let Some(notice) = self.connect_notice.take() {
+            sink.notices(vec![notice.to_owned()], 0).await;
+        }
         if read.is_ok() {
             self.send_warnings(sql, &mut sink).await;
         }
@@ -868,6 +987,46 @@ mod tests {
         writer.finish()
     }
 
+    fn address() -> Address {
+        Address::Tcp {
+            host: "127.0.0.1".to_owned(),
+            port: 3306,
+        }
+    }
+
+    #[test]
+    fn configuration_codes_give_their_fix() {
+        let cases = [
+            (1049, Some(Fix::Database)),
+            (1130, Some(Fix::ServerRule)),
+            (1040, Some(Fix::PoolLimit)),
+            (1203, Some(Fix::PoolLimit)),
+            (1142, Some(Fix::Privilege)),
+            (1792, Some(Fix::ReadOnly)),
+            (1290, Some(Fix::ServerReadOnly)),
+            (1064, None),
+        ];
+        for (code, fix) in cases {
+            let error = connect_error(&server_error(code, ""), &address());
+            assert_eq!(error.fix, fix, "code {code}");
+        }
+        // In a statement, `1049` is a name of the SQL, not the database of the connection.
+        assert_eq!(exec_error(&server_error(1049, ""), "USE x").fix, None);
+        assert_eq!(
+            exec_error(&server_error(1792, ""), "INSERT").fix,
+            Some(Fix::ReadOnly)
+        );
+    }
+
+    #[test]
+    fn a_refused_port_asks_for_the_port() {
+        let refused = DriverError::Io(mysql_async::IoError::Io(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )));
+        assert_eq!(connect_error(&refused, &address()).fix, Some(Fix::Port));
+        assert_eq!(connect_error(&io_error(), &address()).fix, None);
+    }
+
     #[test]
     fn server_codes_give_their_kind() {
         let cases = [
@@ -902,15 +1061,15 @@ mod tests {
     #[test]
     fn a_wrong_password_is_refused_and_keeps_the_text_of_the_driver() {
         for code in [1045, 1698] {
-            let error = connect_error(&server_error(code, "Access denied for 'user'"));
+            let error = connect_error(&server_error(code, "Access denied for 'user'"), &address());
             assert!(error.password_refused, "code {code}");
             assert_eq!(error.kind, ErrorKind::Auth, "code {code}");
             assert!(error.message.contains("Access denied"), "{}", error.message);
         }
-        let error = connect_error(&server_error(1064, "Syntax error"));
+        let error = connect_error(&server_error(1064, "Syntax error"), &address());
         assert!(!error.password_refused);
         assert_eq!(error.kind, ErrorKind::Syntax);
-        let error = connect_error(&io_error());
+        let error = connect_error(&io_error(), &address());
         assert!(!error.password_refused);
         assert_eq!(error.kind, ErrorKind::Connection);
     }

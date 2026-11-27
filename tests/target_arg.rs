@@ -14,7 +14,9 @@ use ratatui::backend::TestBackend;
 use sqln::app::{App, Options};
 use sqln::clipboard::MemoryClipboard;
 use sqln::connection::{Definition, Source};
-use sqln::connector::target::{Engine, OpenTarget, open_target, parse_uri};
+use sqln::connector::target::{
+    ConnectionOptions, Engine, OpenTarget, OptionName, open_target, parse_uri,
+};
 use sqln::store::workspace::{self, OpenTab, OpenTabs};
 use sqln::store::{Root, Scope, Store};
 use sqln::ui::theme::Theme;
@@ -88,12 +90,14 @@ fn a_text_without_a_scheme_is_a_file() {
 
 #[test]
 fn a_text_with_a_scheme_is_a_uri() {
-    let Ok(OpenTarget::Network(target)) = open_target("postgres://ana@db.example/app") else {
+    let Ok(OpenTarget::Network { target, options }) = open_target("postgres://ana@db.example/app")
+    else {
         panic!("expected a network target");
     };
     assert_eq!(target.engine, Engine::Postgres);
     assert_eq!(target.user, "ana");
     assert_eq!(target.password, None);
+    assert!(options.is_empty());
 }
 
 #[test]
@@ -255,4 +259,130 @@ fn a_memory_target_keeps_one_database_across_statements() {
     press(&mut app, KeyCode::F(5));
     run_until_idle(&mut app);
     assert!(screen(&mut app).contains("kept"));
+}
+
+#[test]
+fn a_uri_of_the_command_line_carries_its_connection_options() {
+    let Ok(OpenTarget::Network { options, .. }) = open_target("postgres://ana@h/app?pool=2") else {
+        panic!("expected a network target");
+    };
+    assert_eq!(options.pool, Some(2));
+}
+
+#[test]
+fn connection_options_without_a_target_are_refused() {
+    for args in [
+        vec!["--read-only"],
+        vec![
+            "--execute",
+            "SELECT 1",
+            "--connection",
+            "saved",
+            "--pool",
+            "2",
+        ],
+    ] {
+        let output = sqln(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(
+            stderr_of(&output).contains("Connection options need a target."),
+            "{args:?}: {}",
+            stderr_of(&output)
+        );
+    }
+}
+
+#[test]
+fn a_connection_option_without_its_value_is_refused() {
+    let output = sqln(&["a.db", "--pool"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr_of(&output).contains("--pool needs a value."));
+    let output = sqln(&["a.db", "--pool", "0"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr_of(&output).contains("--pool needs a number greater than 0."));
+}
+
+#[test]
+fn an_option_in_the_uri_and_in_its_flag_stops_the_start() {
+    let output = sqln(&["postgres://ana@127.0.0.1:1/app?pool=2", "--pool", "3"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr_of(&output).contains("Set pool in the URI or in --pool, not both."));
+}
+
+#[test]
+fn an_option_of_another_source_stops_the_start() {
+    let dir = temp_dir!("target-option-source");
+    let file = dir.join("a.db");
+    let output = sqln(&[file.to_str().unwrap(), "--max-scan", "5"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr_of(&output).contains("Max scan is valid only for Kafka."));
+    assert!(!file.exists());
+}
+
+#[test]
+fn the_help_lists_the_connection_options() {
+    let output = sqln(&["--help"]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    for flag in OptionName::ALL.map(OptionName::flag) {
+        assert!(text.contains(flag), "{flag}");
+    }
+    let section = text
+        .lines()
+        .skip_while(|line| !line.starts_with("Connection options"))
+        .take_while(|line| !line.is_empty());
+    for line in section {
+        assert!(line.chars().count() <= 80, "{line}");
+    }
+}
+
+fn target_options(pairs: &[(OptionName, &str)]) -> ConnectionOptions {
+    let mut options = ConnectionOptions::default();
+    for (name, value) in pairs {
+        options.set(*name, value, name.flag()).unwrap();
+    }
+    options
+}
+
+#[test]
+fn the_options_of_the_command_line_apply_to_the_sqlite_file() {
+    let target = temp_db!("target-options.db");
+    fs::write(&target, "").unwrap();
+    let app = app_with(Options {
+        database: Some(target),
+        target_options: target_options(&[
+            (OptionName::ReadOnly, "true"),
+            (OptionName::Production, "true"),
+            (OptionName::Pool, "2"),
+            (OptionName::BusyTimeout, "9"),
+        ]),
+        session_target: true,
+        ..Options::default()
+    });
+    let definition = app.connections()[0].definition.as_ref().unwrap();
+    assert!(definition.read_only);
+    assert!(definition.production);
+    assert_eq!(definition.max_connections, 2);
+    let Source::Sqlite(sqlite) = &definition.source else {
+        panic!("expected SQLite");
+    };
+    assert_eq!(sqlite.busy_timeout, Duration::from_secs(9));
+}
+
+#[test]
+fn a_read_only_target_does_not_offer_to_create_a_missing_file() {
+    let target = temp_dir!("target-read-only-missing").join("new.db");
+    let mut app = app_with(Options {
+        database: Some(target.clone()),
+        target_options: target_options(&[(OptionName::ReadOnly, "true")]),
+        session_target: true,
+        ..Options::default()
+    });
+    let text = screen(&mut app);
+    assert!(!text.contains("Create database"));
+    assert!(
+        text.contains("read-only connection cannot create it"),
+        "{text}"
+    );
+    assert!(app.connections().is_empty());
+    assert!(!target.exists());
 }

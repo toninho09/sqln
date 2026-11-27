@@ -121,11 +121,13 @@ impl Connector for KafkaConnector {
         })
         .await
         .map_err(|_| ConnectError::new(text::KAFKA_CALL_FAILED))?
-        .map_err(|(refused, message)| {
+        .map_err(|(refused, message, fix)| {
             if refused {
                 ConnectError::refused_password(message)
             } else {
-                ConnectError::new(message).kind(ErrorKind::Connection)
+                ConnectError::new(message)
+                    .kind(ErrorKind::Connection)
+                    .fix(fix)
             }
         })?;
         Ok(Box::new(KafkaSession {

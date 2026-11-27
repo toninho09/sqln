@@ -314,7 +314,10 @@ fn the_form_needs_no_user() {
     };
     assert_eq!(target.engine, Engine::Redis);
     assert_eq!(target.user, "");
-    assert_eq!(definition.summary(), "Redis/Valkey 127.0.0.1:6379 · no TLS");
+    assert_eq!(
+        definition.summary(),
+        "Redis/Valkey 127.0.0.1:6379 · auto TLS"
+    );
 }
 
 #[test]
@@ -1408,6 +1411,13 @@ fn tls_verifies_the_server() {
     );
     assert!(try_connect(&client).is_ok());
 
+    // Without a choice, the local address tries with TLS after the refusal of the
+    // probe. The test CA is not in the system roots, so both causes stay.
     let plain = format!("redis://:spike@localhost:{port}/0");
+    let error = try_connect(&plain).err().unwrap();
+    assert!(error.message.starts_with("Without TLS: "), "{error:?}");
+    assert!(error.message.contains(". With TLS: "), "{error:?}");
+
+    let plain = format!("redis://:spike@localhost:{port}/0?sslmode=disable");
     assert!(try_connect(&plain).is_err());
 }

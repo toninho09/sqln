@@ -168,6 +168,51 @@ This entry amends the large-context rule of the Explicit AI SQL completion table
 | 3 | Relevance | A `focus` field in the context lists the objects that the SQL references and their direct foreign-key targets, in the canonical order, only when present | Drop the relevance signal | The model still sees what the SQL names, without changing the cached section |
 | 4 | Metadata budget | The budget derives from provider limits alone: the window minus the output, minus a fixed SQL reserve of 16 KiB capped at half of the remainder | The remainder after the SQL of each request | The section stays identical for one snapshot and provider configuration, whatever SQL the request carries |
 
+## MCP context, Kafka bounds, and IPC 3 — 2026-11-20
+
+A second review finds that the agent works without some facts: production and read-only marks, the notices of the database, the limit of the grid, and the end of a Kafka read.
+A Kafka read without a bound can examine the whole topic, and the Kafka guide repeats in each `get_context`. The user approves the points below.
+This entry replaces the **One guide** delivery of `get_context` in the Kafka entry of 2026-11-13, and the MCP fields row of that entry for the kind of a topic.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Connection facts | `get_context` gives `production`, `read_only`, and `default_schema`. `data_edit` leaves | Keep the fixed `data_edit` | The agent knows which runs ask or refuse |
+| 2 | Statement end | `statements` gives `limit` and `notices` (10 notices, 2 KiB) | Messages only | The agent must not read part of the rows as all rows |
+| 3 | Kafka read end | Each Kafka result gives `read`: scanned, matched, and end. A scan without match adds `next_action` | Notice text only | Zero rows after `SCAN` is not an empty topic |
+| 4 | Default scan | SQLN adds `SCAN 100000` to an agent read without its own `SCAN`, at each access level. `LIMIT` and a start do not skip it. **Kafka max scan** in Settings (`maxScan`) and the **Max scan** field of the connection change the number. Console reads get the same rule, see [kafka.md](kafka.md) | Refuse the read; keep only advice. Skip the scan for `LIMIT` or a start | User choice, changed 2026-11-27. `LIMIT` counts only the matches, and a start does not end the read, so these reads examined the whole topic |
+| 5 | Guide delivery | Once per session, only with a Kafka connection; `include_syntax` sends it again | Each reply; a separate tool | User choice. Fewer tokens |
+| 6 | Topic kind | `describe` accepts the kind `topic` without a schema. The older form stays | Only the older form | The agent does not guess `schema: "topics"` |
+| 7 | IPC 3 | Requests carry an id. Instances of another version appear with `compatible: false` and give `version_mismatch` | Hide them | User choice. One version change for the contract |
+
+## MCP review fixes — 2026-11-20
+
+A review of the MCP finds three faults. The MCP result holds each reply twice, so a reply that SQLN accepts can exceed the response limit, and a task that ran then looks like a failure without its `job_id`.
+The read policy accepts DuckDB and Databricks reads of files and URLs through a quoted table name, and these sources have no native read-only context.
+A call without `instance_id` moves to a restarted instance without notice. The user approves the three fixes.
+This entry replaces decision 3 of the **MCP tools, waiting, and full access** entry.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Large reply | The bridge removes result rows, from the last result page, then the artifact page. The reply keeps the task state and says what to read again | An error without the task; a smaller page for every reply | A task that ran must not look like a failure. The agent could repeat a write |
+| 2 | Files in the read policy | A table name in single quotes refuses. In DuckDB and Databricks, a quoted table name with a path character refuses | Refuse every quoted name; a native setting | DuckDB cannot enable external access again in the same database |
+| 3 | Instance selection | A call without `instance_id` uses the instance of the previous call, or else the only open instance. A closed instance gives `instance_gone` | Discover again at each call | The bridge never moves to another instance without the agent's choice |
+
+## MCP agent facts — 2026-11-20
+
+A third review finds facts that the agent guesses. The `describe` text teaches the older Kafka form, the catalog ignores `schema`, and a topic with a schema refuses with a misleading reason.
+Results give no column types, SQL for the user gives no next step, unloaded catalog columns look like no columns, and `get_context` lists only 200 connections. The user approves the points below.
+The IPC version stays 3: the version of this branch is not released.
+
+| # | Point | Approved decision | Rejected | Reason |
+|---|---|---|---|---|
+| 1 | Column types | The result sink takes the database type of each column. PostgreSQL, MySQL, SQLite, DuckDB, and Databricks send it; Redis and Kafka do not. Result pages give `column_types` | Only advise `describe` | The agent knows dates, decimals, and JSON without one more read |
+| 2 | SQL for the user | The `placed` reply gives `next_action`: how to read the run of the user | A task that waits for the run of the user | User choice. No new task kind |
+| 3 | Catalog of a schema | `describe` with `schema` and no `object` gives that schema only. An unknown schema gives `schema_not_found` with the names | Refuse `schema` | A smaller reply without an artifact |
+| 4 | Topic schema | The kind `topic` reads the fields with any schema | Refuse other schemas | A topic has no schema of its own |
+| 5 | Loaded columns | Each catalog relation gives `columns_loaded` | Leave `columns: null` alone | Null must not read as no columns |
+| 6 | Connection pages | `get_context` takes `connection_offset` and gives `connections_next_offset`. The Kafka guide looks at all connections | Keep 200 connections | Every connection is reachable |
+| 7 | Dialect names | Each dialect file names its MCP dialect. The names keep their values | Rename them to snake case | Agents and `syntax.Kafka` keep working |
+
 ## MCP settings in the IA section — 2026-11-05
 
 The user asks for an **IA** section in Settings, to set the MCP behavior per project.
@@ -186,7 +231,7 @@ The keys are optional, so older files stay valid without a migration.
 | 8 | Levels of the default | All levels, limited by **Max access**. The run protections stay | Up to Allow all | User choice |
 | 9 | **Remember clients** (`mcpRememberClients`) | Off: each new session asks again. On by default. The memory stays out of the file | No field | User choice |
 | 10 | Order | A remembered level comes before the default access | Default first | The remembered level is a choice of the user |
-| 11 | Scope | Global and Project, as the other sections | Global only | User choice |
+| 11 | Scope | Global and Project, as the other sections. A project value replaces the global value, also when it gives more access, such as **Default access** Full access | The project only lowers the access | User choice, 2026-11-27. A project limits the agent when it sets a lower value |
 | 12 | Name | **IA** | **AI**, **Agent**, **MCP** | User choice |
 
 ## Agent tab lifetime and place — 2026-11-05

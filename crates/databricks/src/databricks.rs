@@ -143,6 +143,8 @@ struct DatabricksSession {
 struct Done {
     id: String,
     columns: Vec<String>,
+    /// The SQL type of each column.
+    types: Vec<Option<String>>,
     chunks: usize,
     links: Vec<ExternalLink>,
 }
@@ -220,7 +222,8 @@ impl DatabricksSession {
         if done.columns.is_empty() {
             return Ok(false);
         }
-        sink.set_columns(done.columns.clone()).await;
+        sink.set_typed_columns(done.columns.clone(), done.types.clone())
+            .await;
         let limit = sink.memory_limit();
         // One part at a time: the rows of a batch go to the grid before the next batch.
         for index in 0..done.chunks {
@@ -289,6 +292,12 @@ fn done(answer: Answer) -> Result<Done, ExecError> {
     let manifest = answer.manifest.unwrap_or_default();
     Ok(Done {
         id: answer.statement_id,
+        types: manifest
+            .schema
+            .columns
+            .iter()
+            .map(|column| column.type_text.clone())
+            .collect(),
         columns: manifest
             .schema
             .columns

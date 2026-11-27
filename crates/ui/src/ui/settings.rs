@@ -15,6 +15,7 @@ use super::kit::measure::fit;
 use super::kit::modal::{Modal, SidebarSpec};
 use super::text;
 use super::theme::Theme;
+use crate::grid::printable;
 use crate::input::Action;
 use crate::settings::{Field, SECTIONS, SettingsForm};
 use crate::store::Scope;
@@ -52,12 +53,14 @@ fn window_height() -> u16 {
     BORDER_ROWS + FIRST_FIELD_ROW + fields + FOOTER_ROWS
 }
 
-fn label(field: Field) -> &'static str {
+/// Returns the label of a field, as the dialog shows it.
+pub fn label(field: Field) -> &'static str {
     match field {
         Field::Scope => text::FIELD_SCOPE,
         Field::Keyboard => text::FIELD_KEYBOARD,
         Field::PageSize => text::FIELD_PAGE_SIZE,
         Field::RowCap => text::FIELD_ROW_CAP,
+        Field::MaxScan => text::FIELD_SETTINGS_MAX_SCAN,
         Field::CapInSql => text::FIELD_CAP_IN_SQL,
         Field::Budget => text::FIELD_BUDGET,
         Field::ReopenTabs => text::FIELD_REOPEN_TABS,
@@ -183,6 +186,20 @@ fn choice(form: &SettingsForm, field: Field) -> String {
         | Field::ThemeColors => form.theme_value(field),
         field => form.shortcut_value(field),
     }
+}
+
+/// Returns the value of a field on one line, as the dialog shows it. An empty field
+/// gives the value that it inherits. The key of the provider gives `None`.
+pub fn value_text(form: &SettingsForm, field: Field) -> Option<String> {
+    if field == Field::AiKey {
+        return None;
+    }
+    let value = match form.input(field) {
+        Some(input) if input.text().is_empty() => form.inherited(field),
+        Some(input) => printable(input.text()),
+        None => choice(form, field),
+    };
+    Some(value).filter(|value| !value.is_empty())
 }
 
 fn value(form: &SettingsForm, field: Field, theme: &Theme, width: usize) -> Line<'static> {
@@ -653,6 +670,7 @@ pub fn draw_settings(frame: &mut Frame, form: &SettingsForm, theme: &Theme) -> S
             titles: &titles,
             open: form.section,
             focused: form.focus == Field::Sections,
+            headings: &[],
         })
         .open(frame, theme);
     let pane = modal.pane;

@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::common::{ctrl, key, shift, temp_db, temp_dir};
+use crate::common::{ctrl, key, palette_offers_command, shift, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -295,7 +295,9 @@ fn the_kind_field_names_each_source() {
         "PostgreSQL",
         "MySQL",
         "Databricks",
+        "ClickHouse",
         "SQLite",
+        "libSQL/Turso",
         "Redis/Valkey",
         "DuckDB",
         "Kafka",
@@ -1331,7 +1333,7 @@ fn the_palette_shows_only_commands_that_have_an_effect() {
     let mut screen = Screen::new("palette-state", Theme::plain(), KeyboardMode::Conventional);
     screen.palette();
     screen.write("rollback");
-    assert!(screen.screen(100, 30).contains("No command matches"));
+    assert!(!palette_offers_command(&screen.screen(100, 30)));
     screen.code(KeyCode::Esc);
 
     screen.write("BEGIN;");
@@ -1340,7 +1342,7 @@ fn the_palette_shows_only_commands_that_have_an_effect() {
     screen.pump_until("Transaction open · Idle");
     screen.palette();
     screen.write("rollback");
-    assert!(!screen.screen(100, 30).contains("No command matches"));
+    assert!(palette_offers_command(&screen.screen(100, 30)));
     screen.code(KeyCode::Enter);
     screen.pump_until("No transaction");
 }
@@ -1360,7 +1362,7 @@ fn the_palette_hides_the_console_commands_in_a_table() {
     screen.pump_until("users (table)");
     screen.palette();
     screen.write("run the");
-    assert!(screen.screen(100, 30).contains("No command matches"));
+    assert!(!palette_offers_command(&screen.screen(100, 30)));
 }
 
 #[test]
@@ -1559,11 +1561,11 @@ fn the_sidebar_shows_only_the_sections_with_fields() {
         shown.contains("Credentials") && shown.contains("Security"),
         "{shown}"
     );
-    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
+    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis,
+    // libSQL, SQLite.
+    for _ in 0..5 {
+        screen.code(KeyCode::Left);
+    }
     assert_eq!(screen.app.form().unwrap().kind, sqln::form::Kind::Sqlite);
     let shown = screen.screen(100, 30);
     assert!(!shown.contains("Credentials"), "{shown}");
@@ -1667,8 +1669,8 @@ fn a_click_selects_a_field_in_each_placement() {
 /// Opens the form of a new SQLite connection, with the focus on its file.
 fn sqlite_form_screen(name: &str) -> Screen {
     let mut screen = form_screen(name, Theme::plain());
-    // `Right` goes from PostgreSQL through MySQL and Databricks to SQLite.
-    for _ in 0..3 {
+    // `Right` goes from PostgreSQL through MySQL, Databricks, and ClickHouse to SQLite.
+    for _ in 0..4 {
         screen.code(KeyCode::Right);
     }
     focus_field(&mut screen, Field::File);
@@ -1819,9 +1821,18 @@ fn the_form_keeps_a_note_visible_in_each_placement() {
 
 /// Draws the form with a note. It returns the screen and the rows of the note and the buttons.
 fn form_with_note(note: FormNote, theme: &Theme) -> (Buffer, Vec<String>, usize) {
+    form_with_note_at(note, theme, 100, 40)
+}
+
+fn form_with_note_at(
+    note: FormNote,
+    theme: &Theme,
+    width: u16,
+    height: u16,
+) -> (Buffer, Vec<String>, usize) {
     let mut form = ConnectionForm::new_in(false);
     form.note = Some(note);
-    let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| {
             sqln::ui::form::draw_form(frame, &form, theme);
@@ -1855,9 +1866,48 @@ fn a_short_note_stands_on_the_row_above_the_buttons() {
 #[test]
 fn a_long_note_uses_both_rows_and_ends_above_the_buttons() {
     let message = "start ".repeat(20) + "last";
-    let (_, lines, buttons) = form_with_note(FormNote::Error(message), &Theme::plain());
+    let (_, lines, buttons) = form_with_note(FormNote::Error(message.into()), &Theme::plain());
     assert!(lines[buttons - 2].contains("start"), "{}", lines.join("\n"));
     assert!(lines[buttons - 1].contains("last"), "{}", lines.join("\n"));
+}
+
+#[test]
+fn a_failure_shows_its_fix_below_the_error_at_the_minimum_size() {
+    use sqln::connector::{Failure, Fix};
+    let failure = Failure::new("Connection refused (os error 61)", Some(Fix::Port));
+    let theme = Theme::astrodark();
+    let (buffer, lines, buttons) = form_with_note_at(FormNote::Error(failure), &theme, 80, 24);
+    let screen = lines.join("\n");
+    let error = lines
+        .iter()
+        .position(|line| line.contains("Connection refused"))
+        .unwrap_or_else(|| panic!("{screen}"));
+    let hint = lines
+        .iter()
+        .position(|line| line.contains("Hint:"))
+        .unwrap_or_else(|| panic!("{screen}"));
+    assert!(error < hint && hint < buttons, "{screen}");
+    // The whole hint shows: it ends on the row above the buttons.
+    assert!(lines[buttons - 1].contains("server."), "{screen}");
+    assert!(screen.contains(sqln::ui::text::FIELD_NAME), "{screen}");
+    let column = lines[hint].find("Hint:").unwrap();
+    let column = lines[hint][..column].chars().count() as u16;
+    assert_eq!(buffer[(column, hint as u16)].fg, theme.hint.fg.unwrap());
+    let column = lines[error].find("Connection").unwrap();
+    let column = lines[error][..column].chars().count() as u16;
+    assert_eq!(buffer[(column, error as u16)].fg, theme.error.fg.unwrap());
+}
+
+#[test]
+fn a_failure_without_a_fix_keeps_the_note_above_the_buttons() {
+    let (_, lines, buttons) =
+        form_with_note_at(FormNote::Error("refused".into()), &Theme::plain(), 80, 24);
+    assert!(
+        lines[buttons - 1].contains("refused"),
+        "{}",
+        lines.join("\n")
+    );
+    assert!(!lines.join("\n").contains("Hint:"), "{}", lines.join("\n"));
 }
 
 #[test]
@@ -1878,7 +1928,7 @@ fn each_kind_of_note_has_its_own_color() {
         theme.hint.fg.unwrap()
     );
     assert_eq!(
-        color_of(FormNote::Error("message".to_owned())),
+        color_of(FormNote::Error("message".into())),
         theme.error.fg.unwrap()
     );
     assert_ne!(theme.mark_good.fg, theme.hint.fg);
@@ -1895,11 +1945,11 @@ fn a_working_connection_gives_a_success_note_and_a_test_in_progress_does_not() {
         .unwrap();
     let theme = Theme::astrodark();
     let mut screen = form_screen("form-success-start", theme);
-    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
-    screen.code(KeyCode::Left);
+    // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis,
+    // libSQL, SQLite.
+    for _ in 0..5 {
+        screen.code(KeyCode::Left);
+    }
     focus_field(&mut screen, Field::Name);
     screen.type_text("checked");
     focus_field(&mut screen, Field::File);

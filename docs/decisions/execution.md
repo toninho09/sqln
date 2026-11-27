@@ -2,6 +2,25 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Connection options on the command line — 2026-11-27
+
+The user asks that a command-line target takes the options of the connection form, and approves the points below.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Syntax | Flags and parameters of the connection text: `--read-only` (`read_only=`), `--production` (`production=`), `--pool` (`pool=`), `--connect-timeout` (`connect_timeout=`), `--sql-timeout` (`sql_timeout=`), `--idle-timeout` (`idle_timeout=`), `--registry-user` (`registry_user=`), `--max-scan` (`max_scan=`). SQLite has only flags: `--foreign-keys on\|off` and `--busy-timeout` | Flags only; parameters only | User choice |
+| Options | Limits and protection, the SQLite and DuckDB file options, and the Kafka registry user, registry password, and max scan | Name, theme, icon, folder, and schemas | User choice. A command-line connection is not saved |
+| Values | The form rules: a pool and a connect timeout greater than 0; 0 seconds removes the SQL limit and keeps idle sessions open; switches take `true`, `false`, `on`, or `off` | — | One rule for the form and the command line |
+| Same option twice | Refused, with the flag and the parameter in the message. A repeated flag or parameter is also refused | The flag wins | No value changes without a message |
+| Source | An option that does not apply to the source is refused with the reason: SQLite options on other sources, Kafka options on other sources, `--connect-timeout` on a file, `--read-only` on Kafka | Ignore it | A refused action gives its reason |
+| Target | The options need a target. With `--connection` or without a target, SQLN refuses them | Replace the saved values for one run | User choice. A saved connection keeps its options in its form |
+| `--execute` | The options apply to the target. `--max-scan` is refused, because a batch read reads all messages | Accept and ignore it | A refused action gives its reason |
+| Registry password | A hidden question on the terminal when the target has a registry user. Without a terminal, the connector reads the system vault | An environment variable | The password does not go to the shell history |
+| Read only and a missing file | SQLite and DuckDB refuse at the start, and SQLN does not offer to create the file | Create and then open read only | The batch rule already refuses it |
+| Form | The URI field of the form refuses these parameters: "pool is valid only on the command line. Use the form fields." | Fill the form fields | The form fields stay the only place of these options |
+
+This entry changes the "Places" point of the Kafka max scan in [kafka.md](kafka.md): `max_scan=` is now valid in the connection text of the command line.
+
 ## Execute a subquery
 
 The user approves a separate action for the smallest subquery at the cursor.
@@ -251,7 +270,7 @@ The history reopens section 17 of the plan, which kept it out of the first versi
 | History | File | `history.jsonl` in the global folder, permission `0600`, on by default | Per project; memory only | Old projects do not have that line in the `.gitignore` |
 | History | Content | Each console statement that reached the database, with time, connection, and success or failure | Time and rows | YAGNI |
 | History | Outside | Tables, catalog, export, and connections without a form entry | Record everything | Only the user text matters |
-| History | Secrets | Does not record `PASSWORD`, `PASSWD`, `IDENTIFIED`, `REQUIREPASS`, and `MASTERAUTH`, nor Redis `AUTH`, `ACL`, and `HELLO` | Record everything | Follows the `mysql` client rule |
+| History | Secrets | Does not record `PASSWORD`, `PASSWD`, `IDENTIFIED`, `REQUIREPASS`, and `MASTERAUTH`, nor Redis `AUTH`, `ACL`, `HELLO`, and `MIGRATE` (its `AUTH` holds a password) | Record everything | Follows the `mysql` client rule |
 | History | Limits | File up to 8 MiB; at startup, a larger file keeps the newest 4 MiB. A statement above 64 KiB and a back-to-back repetition do not enter | No limit | The file grows without limit and the window reads everything |
 | History | Write | One write per frame, with the file opened again | File open all the time | `trim` replaces the file, and another instance would keep writing to the old file |
 | History | Window | `Ctrl+W H` and palette. Lists the console connection, with a word filter | All connections | The SQL of another database rarely serves |

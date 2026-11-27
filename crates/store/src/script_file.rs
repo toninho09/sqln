@@ -114,8 +114,9 @@ impl SaveRequest {
                     let lock = scripts::lock(&self.root, &self.meta.id)
                         .map_err(|error| WriteError::Failed(error.to_string()))?
                         .ok_or_else(|| WriteError::Failed(crate::text::SCRIPT_BUSY.to_owned()))?;
-                    let hash = scripts::move_to(from, &self.root, &self.meta)
-                        .map_err(WriteError::Failed)?;
+                    // `None` means that the script had no text file.
+                    let expect = hash.map_or(Expect::Missing, Expect::Hash);
+                    let hash = scripts::move_to(from, &self.root, &self.meta, expect)?;
                     (Some(hash), Some(lock))
                 } else {
                     scripts::write_meta(&self.root, &self.meta, Expect::Any)

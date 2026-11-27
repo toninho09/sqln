@@ -19,6 +19,8 @@ sqln-duckdb = { workspace = true, optional = true }
 sqln-redis = { workspace = true, optional = true }
 sqln-kafka = { workspace = true, optional = true }
 sqln-databricks = { workspace = true, optional = true }
+sqln-clickhouse = { workspace = true, optional = true }
+sqln-libsql = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true
@@ -26,7 +28,17 @@ tokio.workspace = true
 [features]
 # Each feature adds one driver. A build without a driver keeps its saved connections, and
 # connecting to one explains that the build lacks the driver.
-default = ["postgres", "mysql", "sqlite", "duckdb", "redis", "kafka", "databricks"]
+default = [
+    "postgres",
+    "mysql",
+    "sqlite",
+    "duckdb",
+    "redis",
+    "kafka",
+    "databricks",
+    "clickhouse",
+    "libsql",
+]
 postgres = ["dep:sqln-postgres"]
 mysql = ["dep:sqln-mysql"]
 sqlite = ["dep:sqln-sqlite"]
@@ -34,6 +46,8 @@ duckdb = ["dep:sqln-duckdb"]
 redis = ["dep:sqln-redis"]
 kafka = ["dep:sqln-kafka"]
 databricks = ["dep:sqln-databricks"]
+clickhouse = ["dep:sqln-clickhouse"]
+libsql = ["dep:sqln-libsql"]
 
 [lints]
 workspace = true

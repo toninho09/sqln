@@ -110,6 +110,7 @@ impl App {
             "console_id": console.to_string(),
             "revision": self.tabs.consoles[index].editor.revision(),
             "status": "placed",
+            "next_action": crate::ui::text::AGENT_PLACED_NEXT,
         }))
     }
 

@@ -7,20 +7,22 @@ use ratatui::widgets::Paragraph;
 
 use super::icons::connection_symbol;
 use super::kit::buttons::{self, RowOptions};
-use super::kit::feedback::draw_note;
+use super::kit::feedback::{draw_note_rows, note_rows};
 use super::kit::form::{
     browse_width, choice_value, draw_browse_button, draw_row, flag_mark, focus_style, value_width,
 };
-use super::kit::geometry::modal_width;
+use super::kit::geometry::{BORDER_ROWS, FOOTER_ROWS, NOTE_ROWS, modal_width};
 use super::kit::input::{self, FieldMode, FieldText};
 use super::kit::list::{ListWindow, draw_list_window};
-use super::kit::modal::{Modal, SidebarSpec};
+use super::kit::modal::{Modal, SidebarSpec, sidebar_content_width};
 use super::kit::style::{self, ListRow, NoteLevel};
 use super::text;
 use super::theme::Theme;
 use crate::connector::target::hide_uri_password;
 use crate::filter_list::FilterList;
-use crate::form::{ConnectionForm, Field, FieldStyle, FormNote, Group, Kind, SchemaList};
+use crate::form::{
+    ConnectionForm, Field, FieldStyle, FormNote, Group, Kind, SchemaList, TlsChoice,
+};
 use crate::grid::printable;
 use crate::store::Scope;
 
@@ -70,7 +72,7 @@ fn label(kind: Kind, field: Field) -> &'static str {
         Field::Database if kind == Kind::Databricks => text::FIELD_CATALOG,
         Field::Database => text::FIELD_DATABASE,
         Field::User => text::FIELD_USER,
-        Field::Password if kind == Kind::Databricks => text::FIELD_TOKEN,
+        Field::Password if matches!(kind, Kind::Databricks | Kind::Libsql) => text::FIELD_TOKEN,
         Field::Password => text::FIELD_PASSWORD,
         Field::Credential => text::FIELD_CREDENTIAL,
         Field::Tls => text::FIELD_TLS,
@@ -83,6 +85,7 @@ fn label(kind: Kind, field: Field) -> &'static str {
         Field::RegistryPassword => text::FIELD_REGISTRY_PASSWORD,
         Field::ConsumerGroup => text::FIELD_CONSUMER_GROUP,
         Field::Topics => text::FIELD_TOPICS,
+        Field::MaxScan => text::FIELD_MAX_SCAN,
         Field::Warehouse => text::FIELD_WAREHOUSE,
         Field::File => text::FIELD_FILE,
         Field::ForeignKeys => text::FIELD_FOREIGN_KEYS,
@@ -113,6 +116,8 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             Kind::Sqlite => text::VALUE_SQLITE,
             Kind::Duckdb => text::VALUE_DUCKDB,
             Kind::Databricks => text::VALUE_DATABRICKS,
+            Kind::ClickHouse => text::VALUE_CLICKHOUSE,
+            Kind::Libsql => text::VALUE_LIBSQL,
         },
         Field::Scope if form.scope == Scope::Project => text::VALUE_SCOPE_PROJECT,
         Field::Scope => text::VALUE_SCOPE_GLOBAL,
@@ -123,8 +128,11 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
         }
         Field::Credential => text::VALUE_SESSION,
         Field::Sasl => form.sasl.name(),
-        Field::Tls if form.verify_tls => text::VALUE_TLS_VERIFY,
-        Field::Tls => text::VALUE_TLS_OFF,
+        Field::Tls => match form.tls {
+            TlsChoice::Auto => text::VALUE_TLS_AUTO,
+            TlsChoice::Verify => text::VALUE_TLS_VERIFY,
+            TlsChoice::Off => text::VALUE_TLS_OFF,
+        },
         // A custom theme has its own name, so `value_line` builds this value.
         Field::Theme => text::VALUE_DEFAULT,
         Field::Icon => form
@@ -136,6 +144,43 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
             Some(false) => text::VALUE_OFF,
         },
     }
+}
+
+/// Returns the text of a choice. A custom theme has its own name.
+fn choice_text(form: &ConnectionForm, field: Field) -> String {
+    if field == Field::Theme {
+        form.theme.as_ref().map_or_else(
+            || text::VALUE_DEFAULT.to_owned(),
+            |name| text::theme_label(name, &form.themes),
+        )
+    } else {
+        choice(form, field).to_owned()
+    }
+}
+
+/// Returns the label of a field, as the form shows it.
+pub fn field_label(form: &ConnectionForm, field: Field) -> &'static str {
+    label(form.kind, field)
+}
+
+/// Returns the title of the section that holds a field.
+pub fn field_section(field: Field) -> &'static str {
+    section_title(field.group())
+}
+
+/// Returns the value of a field on one line, as the form shows it. A secret field and
+/// an empty field give `None`.
+pub fn field_value(form: &ConnectionForm, field: Field) -> Option<String> {
+    let value = match field.style() {
+        FieldStyle::Secret | FieldStyle::Button => return None,
+        FieldStyle::Choice => choice_text(form, field),
+        FieldStyle::Flag => text::on_off(form.flag(field)).to_owned(),
+        FieldStyle::Text if field == Field::Uri => {
+            hide_uri_password(&printable(form.text(field)), MASK)
+        }
+        FieldStyle::Text => printable(form.text(field)),
+    };
+    Some(value).filter(|value| !value.is_empty())
 }
 
 /// Writes a text value, and it keeps the cursor inside the width.
@@ -173,14 +218,7 @@ fn value_line(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) 
                 .icon
                 .filter(|_| field == Field::Icon)
                 .map_or(String::new(), |icon| Theme::icon(connection_symbol(icon)));
-            let value = if field == Field::Theme {
-                form.theme.as_ref().map_or_else(
-                    || text::VALUE_DEFAULT.to_owned(),
-                    |name| text::theme_label(name, &form.themes),
-                )
-            } else {
-                choice(form, field).to_owned()
-            };
+            let value = choice_text(form, field);
             Line::from(Span::styled(
                 choice_value(&format!("{symbol}{value}")),
                 style,
@@ -240,19 +278,29 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         .iter()
         .position(|section| *section == open)
         .unwrap_or(0);
-    let modal = Modal::form(
-        modal_width(frame.area().width, WIDTH),
-        FIRST_FIELD_ROW,
-        u16::try_from(tallest).unwrap_or(u16::MAX),
-    )
-    .title(title)
-    .heading_row(TITLE_ROW)
-    .sidebar(SidebarSpec {
-        titles: &titles,
-        open: index,
-        focused: form.focus == Field::Sections,
-    })
-    .open(frame, theme);
+    let tallest = u16::try_from(tallest).unwrap_or(u16::MAX);
+    let width = modal_width(frame.area().width, WIDTH);
+    // The hint of a failure takes rows below the note. The window grows only into the
+    // free rows of the screen, so the fields keep their places.
+    let hint = match &form.note {
+        Some(FormNote::Error(failure)) => failure.hint(),
+        _ => None,
+    };
+    let hint_rows = hint.as_deref().map_or(0, |hint| {
+        note_rows(hint, sidebar_content_width(width), u16::MAX)
+    });
+    let height = BORDER_ROWS + FIRST_FIELD_ROW + tallest + FOOTER_ROWS;
+    let extra = hint_rows.min(frame.area().height.saturating_sub(height));
+    let modal = Modal::form(width, FIRST_FIELD_ROW, tallest.saturating_add(extra))
+        .title(title)
+        .heading_row(TITLE_ROW)
+        .sidebar(SidebarSpec {
+            titles: &titles,
+            open: index,
+            focused: form.focus == Field::Sections,
+            headings: &[],
+        })
+        .open(frame, theme);
     let pane = modal.pane;
     let mut layout = FormLayout {
         sections: sections.into_iter().zip(modal.sidebar_rows).collect(),
@@ -279,14 +327,22 @@ pub fn draw_form(frame: &mut Frame, form: &ConnectionForm, theme: &Theme) -> For
         let (message, level) = match note {
             FormNote::Info(message) => (message, NoteLevel::Info),
             FormNote::Success(message) => (message, NoteLevel::Success),
-            FormNote::Error(message) => (message, NoteLevel::Error),
+            FormNote::Error(failure) => (&failure.message, NoteLevel::Error),
         };
-        draw_note(
+        // The note keeps at least one row, and the hint takes the rows below it.
+        let rows = NOTE_ROWS + extra;
+        let hint_rows = hint_rows.min(rows.saturating_sub(1));
+        if let Some(hint) = hint.as_deref().filter(|_| hint_rows > 0) {
+            let style = style::note_style(NoteLevel::Hint, theme);
+            draw_note_rows(frame, content, button_row, hint, style, hint_rows);
+        }
+        draw_note_rows(
             frame,
             content,
-            button_row,
+            button_row.saturating_sub(hint_rows),
             message,
             style::note_style(level, theme),
+            (rows - hint_rows).min(NOTE_ROWS),
         );
     }
     let buttons = buttons::dialog_items(

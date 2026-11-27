@@ -3,6 +3,7 @@
 //! dialect has one file here, and `features` is the only `match` that chooses it. The
 //! lexical rules are in `sqln_sql::sql::dialect`.
 
+mod clickhouse;
 mod databricks;
 mod duckdb;
 mod kafka;
@@ -111,6 +112,7 @@ pub enum Engine {
     Redis,
     Kafka,
     Databricks,
+    ClickHouse,
 }
 
 /// The words that completion offers for a dialect. A slice of lists keeps shared lists
@@ -182,6 +184,13 @@ pub trait Features: Sync {
     fn engine(&self) -> Engine;
     /// The family of the catalog reads, DDL, and data edits, or `None`.
     fn family(&self) -> Option<Family>;
+    /// The statement of an agent read with a bound that the agent did not write, or
+    /// `None` when the statement keeps its text. A Kafka read without a bound examines
+    /// the whole topic, so it gets `SCAN scan`.
+    fn default_bound(&self, sql: &str, scan: u64) -> Option<String>;
+    /// The name of the dialect in the MCP replies, such as `dialect` of `get_context` and
+    /// the key of `syntax`. Agents rely on it, so it never changes with a Rust rename.
+    fn agent_name(&self) -> &'static str;
 }
 
 /// Returns the features of a dialect.
@@ -194,5 +203,6 @@ pub fn features(dialect: Dialect) -> &'static dyn Features {
         Dialect::Redis => &redis::Redis,
         Dialect::Kafka => &kafka::Kafka,
         Dialect::Databricks => &databricks::Databricks,
+        Dialect::ClickHouse => &clickhouse::ClickHouse,
     }
 }

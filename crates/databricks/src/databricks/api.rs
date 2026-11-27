@@ -6,14 +6,14 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::connector::target::{Address, NetworkTarget, Secret, Tls, TlsFiles};
-use crate::connector::{ConnectError, ErrorKind, ExecError, describe, tls};
+use crate::connector::http::{self, network_error};
+use crate::connector::target::{NetworkTarget, Secret, TlsFiles};
+use crate::connector::{ConnectError, ErrorKind, ExecError, describe};
 use crate::text;
 
 /// The time that the first request waits for the end of a statement. The API accepts
 /// `0s` or 5 to 50 seconds. A cancel that arrives in this time waits for the answer.
 const WAIT: &str = "5s";
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// The time limit of one API request. The first request waits `WAIT` at most.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// The time limit between two parts of a download.
@@ -120,6 +120,9 @@ pub struct Status {
 #[derive(Debug, Default, Deserialize)]
 pub struct Column {
     pub name: String,
+    /// The SQL type, such as `DECIMAL(10,2)`. Older answers can omit it.
+    #[serde(default)]
+    pub type_text: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -175,32 +178,6 @@ pub struct Api {
     tls: bool,
 }
 
-fn client(files: Option<&TlsFiles>) -> Result<reqwest::Client, ConnectError> {
-    let config = match files {
-        Some(files) => tls::client_config(files)?,
-        None => tls::unused_client_config()?,
-    };
-    reqwest::Client::builder()
-        .tls_backend_preconfigured(config)
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(CONNECT_TIMEOUT)
-        .read_timeout(READ_TIMEOUT)
-        .build()
-        .map_err(|error| ConnectError::new(describe(&error.without_url())))
-}
-
-/// The text of a network error. The URL stays out: a result link holds a signature.
-fn network_error(error: reqwest::Error) -> ExecError {
-    let kind = if error.is_timeout() {
-        ErrorKind::Timeout
-    } else if error.is_connect() || error.is_request() || error.is_body() {
-        ErrorKind::Connection
-    } else {
-        ErrorKind::Other
-    };
-    ExecError::with_kind(kind, describe(&error.without_url()))
-}
-
 /// Refuses a statement id that is not one path segment.
 fn segment(id: &str) -> Result<&str, ExecError> {
     if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
@@ -217,27 +194,14 @@ impl Api {
             .clone()
             .filter(|token| !token.expose().is_empty())
             .ok_or_else(|| ConnectError::refused_password(text::DATABRICKS_NO_TOKEN))?;
-        let Address::Tcp { host, port } = &target.address else {
-            return Err(ConnectError::new(
-                "A Databricks connection needs a host, not a socket.",
-            ));
-        };
-        let host = if host.contains(':') {
-            format!("[{host}]")
-        } else {
-            host.clone()
-        };
-        let (scheme, files) = match &target.tls {
-            Tls::Verify(files) => ("https", Some(files)),
-            Tls::Disabled => ("http", None),
-        };
+        let (base, http) = http::endpoint(target, "Databricks", Some(READ_TIMEOUT))?;
         Ok(Self {
-            base: format!("{scheme}://{host}:{port}/api/2.0/sql"),
+            tls: base.starts_with("https://"),
+            base: format!("{base}/api/2.0/sql"),
             warehouse: target.databricks.warehouse.clone(),
             token,
-            http: client(files)?,
-            download: client(Some(&TlsFiles::default()))?,
-            tls: files.is_some(),
+            http,
+            download: http::client(Some(&TlsFiles::default()), Some(READ_TIMEOUT))?,
         })
     }
 

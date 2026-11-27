@@ -396,7 +396,7 @@ The mark leaves with the next edit, and an edit during the execution prevents th
 
 The active SQL console checks syntax after 400 ms without a text or dialect change.
 The check runs locally, outside the interface thread. It executes no SQL and reads no parameter values.
-PostgreSQL, MySQL, SQLite, DuckDB, and Databricks use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
+PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Databricks, and ClickHouse use the bundled `sqlparser` dialects. Redis, Valkey, and Kafka have no SQL check.
 The existing lexer still serves highlighting, autocomplete, and incomplete editor text.
 
 Located warnings underline tokens without moving the cursor or changing the selection.
@@ -627,7 +627,8 @@ The table tab and the structure tab stay open together.
   `pg_size_pretty`, estimates from the catalog, and scan counts and dates from
   `pg_stat_user_tables`. MySQL shows the estimates and sizes of `information_schema.TABLES`.
   The count of rows is an estimate, not a `COUNT`: the section runs no count query.
-  SQLite, DuckDB, and Databricks connections show no statistics section.
+  SQLite, libSQL, DuckDB, Databricks, and ClickHouse connections show no statistics section.
+  ClickHouse shows only the columns section.
 - The grid uses the pagination, the budget, the search, the copy, and the export of the table tab.
 - The export has no target table, as in a console.
 - The tab does not come back in the next session.
@@ -877,10 +878,12 @@ The form has a sidebar, as the Settings dialog has. Each section shows its own f
 | Address | Host, Port, and Database; or the URI; or the SQLite file |
 | Credentials | User, Password, and Credential |
 | Security | TLS, CA file, client certificate, and client key |
-| Options | Schemas (Databases in MySQL and Redis), SQLite foreign keys and busy limit, Kafka consumer group and topics, Pool, Read only (not in Kafka), Production, Connect limit, Statement limit, Idle limit, Theme, and Icon |
+| Options | Schemas (Databases in MySQL, ClickHouse, and Redis), SQLite foreign keys and busy limit, Kafka consumer group and topics, Pool, Read only (not in Kafka), Production, Connect limit, Statement limit, Idle limit, Theme, and Icon |
 
 A section without fields stays out of the sidebar, so SQLite has no Credentials and no Security. DuckDB shows File and Schemas, and it has no busy timeout or foreign keys.
 Databricks shows Catalog and Warehouse in Address, and Token in place of User and Password. The Schemas field holds `catalog.schema` names.
+ClickHouse shows the fields of MySQL: its databases are the schemas of the explorer. libSQL shows Host and Port in Address, and Token in place of User and Password; it has no Database and no Schemas field.
+The **Type** choice has this order: PostgreSQL, MySQL, Databricks, ClickHouse, SQLite, libSQL/Turso, Redis/Valkey, DuckDB, and Kafka.
 The buttons stay at the bottom of each section.
 All sections keep the height of the largest section, so the window does not move. The width starts at 76 columns, grows to 140 columns on a larger screen, and leaves 8 columns free.
 The form of a connected connection also has the sidebar: General holds the name, and Options holds the schemas, the theme, the icon, and the production mark.
@@ -896,7 +899,7 @@ Resolve relative paths of `config.json` according to the scope: project root or 
 In the form, a typed SQLite file starts from the current directory, and the connection saves the full path.
 A saved and unchanged path continues as it is in the file, and the test uses the folder of the scope.
 
-The form suggests disabled TLS on `localhost`, `127.0.0.0/8`, `::1`, and Unix socket, and verification on the others.
+The TLS field has three values: **Automatic** (the default), **Verify the certificate**, and **Off**. **Automatic** starts without TLS on `localhost`, `127.0.0.0/8`, `::1`, and Unix socket, and with verification on the others. It tries the other mode once, only after the server refuses the first one. A fallback to no TLS writes a notice in **Messages**. CA and client files need **Verify the certificate**.
 The **Read only** field is applied by the database and prevents accidents.
 
 The **Production** field shows `PROD` in the status bar, including with `NO_COLOR`.
@@ -1285,7 +1288,7 @@ The switch happens in the editor itself, so the selection and the history contin
 ```
 
 The **Editor** section includes **Autocomplete** and **Undo limit**, with 64 MiB per console as the conventional undo default.
-The **Results** section includes **Limit in SQL**, on by default, and **System commands**, off by default.
+The **Results** section includes **Limit in SQL**, on by default, **Kafka max scan**, 100000 by default, and **System commands**, off by default. **Kafka max scan** is the `SCAN` that a Kafka read without its own `SCAN` gets; the **Max scan** field of a Kafka connection replaces it. See [Kafka](KAFKA.md#read-a-finite-number-of-messages).
 **System commands** only filters the Messages view.
 
 The **MCP** section has the MCP fields. See [MCP settings](MCP.md#mcp-settings).
@@ -1423,10 +1426,18 @@ The JSON stays compact in this window. `f` toggles formatting only in the cell v
 
 ### Help screen
 
-`F1` opens a window with a sidebar. The sidebar lists the pages: the five guide topics, **All keys**, then each key group.
-`F1` always opens on the first topic. The sidebar scrolls the smallest number of rows that keeps the open page in view.
+`F1` opens a window with a sidebar. The sidebar lists the pages in groups: the ten guide topics, **All keys**, then each key group.
+A heading in uppercase, in the hint style, starts each group: **GETTING STARTED**, **FEATURES**, **AI**, and **KEYS**. A heading is not a page: `Tab`, a click, and the palette skip it.
+`F1` always opens on the first topic. The sidebar scrolls the smallest number of rows that keeps the open page in view. When it scrolls up to the first page of a group, the heading of the group shows too.
+The palette (`Ctrl+P`) lists each page as **Help: <page>**, after the commands. Its filter reads the full text of the page, so `emit changes` finds **Help: Kafka**. A help row opens this window on its page.
 
-The guide topics are: **Connect**, **Run SQL**, **Tables**, **Kafka**, and **Scripts**.
+The guide topics are, in their groups:
+
+- **Getting started**: **Connect**, **Run SQL**, **Tables**, and **Scripts**.
+- **Features**: **Query** (parameters, plans, and history), **Data** (export, import, and edits), **Schema** (structure, diagram, compare, and server sessions), and **Kafka**.
+- **AI**: **AI** (completion and explanations) and **MCP**.
+
+The **MCP** topic explains the client setup, the access levels, the agent commands, and the fields of **Settings > MCP**, with their `config.json` keys.
 Each topic has a title, a short text, steps, and examples. Each step shows the effective key of the active mode and the custom shortcuts.
 A step of the explorer starts with the focus key, such as `Ctrl+W h a`. A command without a key shows the palette path, such as `Ctrl+P → Export the result to a file`.
 The **Kafka** topic shows SELECT examples: `TOPICS`, `PARTITIONS`, `LIMIT`, `SCAN`, `PARTITION`, `START AT`, `WHERE` on the value, the key, the headers, and the metadata, `IS MISSING`, and `EMIT CHANGES`.
@@ -1447,20 +1458,20 @@ The footer shows the count of matching items or commands and the visible row ran
 ```text
 ╭ Help · Conventional · Editor ───────────────────────────────────────────────╮
 │                │ >  Type a word to filter the guide                          │
-│   Connect      │                                                             │
-│   Run SQL      │ 4. Read Kafka with SELECT                                   │
-│   Tables       │ A Kafka connection uses kafka://host:9092, or kafkas://     │
-│ > Kafka        │ with TLS. SQLN reads the messages in the client with a ...  │
+│ GETTING STARTED│                                                             │
+│   Connect      │ 8. Read Kafka with SELECT                                   │
+│   Run SQL      │ A Kafka connection uses kafka://host:9092, or kafkas://     │
+│   Tables       │ with TLS. SQLN reads the messages in the client with a ...  │
 │   Scripts      │                                                             │
-│   All keys     │ Enter                     Open the last 500 messages of the │
-│   Editor       │                           selected topic                    │
-│   Run          │ F5                        Run the statement at the cursor   │
-│   Transaction  │                                                             │
-│   Connection   │ List the topics                                             │
-│   Tabs         │   TOPICS                                                    │
-│   Panels       │                                                             │
-│   Application  │ Watch the new messages until you stop the read              │
-│                │   SELECT * FROM orders EMIT CHANGES;                        │
+│ FEATURES       │ Enter                     Open the last 500 messages of the │
+│   Query        │                           selected topic                    │
+│   Data         │ F5                        Run the statement at the cursor   │
+│   Schema       │                                                             │
+│ > Kafka        │ List the topics                                             │
+│ AI             │   TOPICS                                                    │
+│   AI           │                                                             │
+│   MCP          │ Watch the new messages until you stop the read              │
+│ KEYS           │   SELECT * FROM orders EMIT CHANGES;                        │
 ╰────────────────┴──────────────────────────────────────── 17 items · 1–16/52 ─╯
 ```
 
@@ -1494,6 +1505,10 @@ Stop and transaction actions take priority, then panel actions. Unavailable acti
 Navigator row actions require navigator focus. Add connection and scripts without a connection remain global.
 Actions name their target where needed. A panel shortcut appears only where that shortcut works.
 The palette includes Apply filters and Clear filters for table filters without adding default shortcuts.
+After the commands, the palette lists each field of the current connection form as **Connection: <field> = <value> — <connection>**, and each field of the Settings dialog as **Setting: <field> = <value> — <section>**. A secret field shows no value.
+The current connection is the explorer row while the explorer has the focus, else the connection of the open tab. A connection without a saved definition has no rows.
+A field row opens its form on the section of the field, with the focus on the field. A connected connection opens the restricted form. When that form does not show the field, the focus goes to **Disconnect**, with the note "Disconnect to change <field>."
+For example, `pool limit` finds **Connection: Pool limit = 5 — prod**.
 The window has 64 columns and 12 list rows, and grows to 100 columns and 30 rows on a larger screen. It stays on top.
 
 ```text
@@ -1520,7 +1535,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
                         │                         \___ \| | | | |   |  \| |
                         │                          ___) | |_| | |___| |\  |
                         │                         |____/ \__\_\_____|_| \_|
-                        │                                   0.5.2
+                        │                                   0.6.0
                         │                            No console is open
                         │
                         │                 Ctrl+W h a  Add a connection
@@ -1534,7 +1549,7 @@ The screen takes no text, and the commands of a tab have no effect. `Ctrl+W q` q
 
 Without a connection, the screen shows **No connection yet**, without the **Open a console** row.
 With the explorer hidden, the first row is `Ctrl+W b` **Show the explorer**, the status line shows `HOME`,
-and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.5.2` instead.
+and `Ctrl+W b` gives the focus to the explorer again. An area too short for the logo shows `SQLN 0.6.0` instead.
 
 ### Welcome screen
 
@@ -1542,7 +1557,7 @@ The screen appears over an editor without text. It keeps no state and captures n
 The first typed character removes the screen.
 
 ```text
-           SQLN 0.5.2
+           SQLN 0.6.0
            Write SQL here
 
                    F5  Run the statement

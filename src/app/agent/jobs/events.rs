@@ -29,22 +29,33 @@ impl App {
                     return;
                 }
                 match result {
-                    Ok(statements) => {
+                    Ok((statements, bounded)) => {
                         let Some(job) = self.agent.jobs.get_mut(&id) else {
                             return;
                         };
                         if let Some(statements) = statements
                             && let Some(draft) = &mut job.draft
                         {
-                            let count = statements.len();
-                            draft.plan = RunPlan {
-                                statements,
-                                rows: vec![0; count],
-                                starts: vec![0; count],
-                                ordinals: Vec::new(),
-                            };
+                            if draft.split.is_some() {
+                                let count = statements.len();
+                                draft.plan = RunPlan {
+                                    statements,
+                                    rows: vec![0; count],
+                                    starts: vec![0; count],
+                                    ordinals: Vec::new(),
+                                };
+                            } else {
+                                // A console range keeps the places of its statements.
+                                draft.plan.statements = statements;
+                            }
                         }
                         job.state = "ready";
+                        job.default_scan = bounded;
+                        if let Some(scan) = bounded {
+                            let session = job.session.clone();
+                            let connection = job.connections.first().map(|(id, _)| *id);
+                            self.agent_log(&session, connection, &text::agent_default_scan(scan));
+                        }
                     }
                     Err(error) => self.fail_agent_job(&id, &error.message),
                 }
@@ -108,24 +119,46 @@ impl App {
             .filter(|job| job.executions.contains(&(console, execution)))
         {
             match event {
+                ExecEvent::Notice { text, .. } if matches!(job.output, Output::Query) => {
+                    keep_notice(&mut job.notices, text);
+                }
                 ExecEvent::StatementFinished {
-                    key, status, end, ..
+                    key,
+                    status,
+                    end,
+                    fix,
+                    ..
                 } => {
-                    if let StatementStatus::Error(message) = status {
-                        job.message = Some(message.clone());
+                    match status {
+                        StatementStatus::Error(message) => {
+                            job.message = Some(message.clone());
+                            job.fix = *fix;
+                        }
+                        // A time limit has no message, but its fix explains the failure.
+                        StatementStatus::Timeout => job.fix = *fix,
+                        _ => {}
                     }
+                    let notices = std::mem::take(&mut job.notices);
                     if matches!(job.output, Output::Query)
                         && *status != StatementStatus::NotExecuted
                         && job.statements.len() < STATEMENTS
                     {
-                        job.statements
-                            .push(statement_value(key.index, status, end.as_ref()));
+                        job.statements.push(statement_value(
+                            key.index,
+                            status,
+                            end.as_ref(),
+                            notices,
+                            *fix,
+                        ));
                     }
                 }
-                ExecEvent::ExecutionFinished { end, message, .. } => {
+                ExecEvent::ExecutionFinished {
+                    end, message, fix, ..
+                } => {
                     job.ends.insert(console, *end);
                     if message.is_some() {
                         job.message.clone_from(message);
+                        job.fix = *fix;
                     }
                 }
                 _ => {}
@@ -202,11 +235,11 @@ impl App {
         for id in ids {
             let job = &self.agent.jobs[&id];
             if job.ends.values().any(|end| *end != ExecutionEnd::Completed) {
-                let message = job
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| "The assistant operation did not complete.".into());
-                self.fail_agent_job(&id, &message);
+                let failure = match &job.message {
+                    Some(message) => Failure::new(message.clone(), job.fix),
+                    None => Failure::new("The assistant operation did not complete.", job.fix),
+                };
+                self.fail_agent_job_with(&id, &failure);
                 continue;
             }
             let sender = self.agent.sender.clone();

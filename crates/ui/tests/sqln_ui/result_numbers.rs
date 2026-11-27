@@ -56,6 +56,7 @@ fn grid(console: &mut Console, budget: &Budget, key: StatementKey, column: &str,
         ExecEvent::Columns {
             key,
             columns: vec![column.into()],
+            types: Vec::new(),
             live: None,
             progress: None,
         },
@@ -83,6 +84,7 @@ fn finish_statement(
 ) {
     console.on_event(
         ExecEvent::StatementFinished {
+            fix: None,
             key,
             status,
             end: Some(StatementEnd {
@@ -98,6 +100,7 @@ fn finish_statement(
 fn finish(console: &mut Console, budget: &Budget, execution: u64, end: ExecutionEnd) {
     console.on_event(
         ExecEvent::ExecutionFinished {
+            fix: None,
             console: 1,
             execution,
             end,
@@ -247,6 +250,7 @@ fn events_of_an_old_execution_make_no_tab() {
         ExecEvent::Columns {
             key: key(1, 0),
             columns: vec!["late".into()],
+            types: Vec::new(),
             live: None,
             progress: None,
         },

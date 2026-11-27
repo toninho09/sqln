@@ -4160,7 +4160,7 @@ dependencies = [
 
 [[package]]
 name = "sqln"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4196,13 +4196,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqln-connector"
-version = "0.5.2"
+name = "sqln-clickhouse"
+version = "0.6.0"
 dependencies = [
  "async-trait",
+ "reqwest",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "sqln-testkit",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "sqln-connector"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "sqln-clickhouse",
  "sqln-databricks",
  "sqln-duckdb",
  "sqln-kafka",
+ "sqln-libsql",
  "sqln-mysql",
  "sqln-postgres",
  "sqln-redis",
@@ -4216,7 +4232,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-core"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "arboard",
  "base64 0.23.1",
@@ -4232,7 +4248,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-databricks"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "arrow-array",
  "arrow-cast",
@@ -4251,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-duckdb"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "duckdb",
@@ -4263,7 +4279,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-exec"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -4291,7 +4307,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-kafka"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "apache-avro",
  "async-trait",
@@ -4312,8 +4328,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqln-libsql"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqln-core",
+ "sqln-session",
+ "sqln-sql",
+ "sqln-testkit",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "sqln-mysql"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "mysql_async",
@@ -4326,7 +4359,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-postgres"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4343,7 +4376,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-redis"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4358,7 +4391,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-runtime"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "futures-util",
  "rusqlite",
@@ -4377,12 +4410,13 @@ dependencies = [
 
 [[package]]
 name = "sqln-session"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "chrono",
  "proptest",
  "regex",
+ "reqwest",
  "rustls",
  "rustls-native-certs",
  "serde",
@@ -4397,7 +4431,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-sql"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "proptest",
  "rusqlite",
@@ -4408,7 +4442,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-sqlite"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -4420,7 +4454,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-store"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",
@@ -4439,7 +4473,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-testkit"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "crossterm",
@@ -4452,7 +4486,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-ui"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "crossterm",
  "edtui",
@@ -4474,7 +4508,7 @@ dependencies = [
 
 [[package]]
 name = "sqln-vault"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "apple-native-keyring-store",
  "keyring-core",

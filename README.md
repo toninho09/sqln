@@ -5,7 +5,9 @@ A terminal database client with several connections, SQL consoles, and table tab
 SQLN brings an editor, a database navigator, and a results grid into one terminal.
 Use familiar editor keys or Vim mode. Keep scripts with a project, or use global connections across projects.
 
-**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka with the Schema Registry, and Databricks SQL warehouses.
+**Databases:** SQLite, DuckDB, PostgreSQL, MySQL, Redis, Valkey, Kafka with the Schema Registry, Databricks SQL warehouses, ClickHouse, and libSQL (Turso and `sqld`).
+
+**Compatible servers, best effort:** CockroachDB and YugabyteDB with the PostgreSQL type, and MariaDB and TiDB with the MySQL type. Use their `postgresql://` or `mysql://` connection text. Neon, Supabase, AlloyDB, and TimescaleDB run PostgreSQL, so they use the PostgreSQL type. See the [known limitations](#known-limitations).
 
 > SQLN is in development. This repository supports source installation and unsigned workflow binaries.
 > Review the [known limitations](#known-limitations) before use with important data.
@@ -140,7 +142,7 @@ For a missing SQLite file, SQLN asks before allowing creation. Cancel leaves the
 
 #### Build with selected drivers
 
-Each database driver is a Cargo feature: `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, and `databricks`. All are on by default. A build with fewer drivers compiles faster and is smaller. DuckDB and Kafka take the most time to compile.
+Each database driver is a Cargo feature: `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, `databricks`, `clickhouse`, and `libsql`. All are on by default. A build with fewer drivers compiles faster and is smaller. DuckDB and Kafka take the most time to compile.
 
 ```sh
 cargo install --path . --locked --no-default-features --features postgres,sqlite
@@ -189,13 +191,43 @@ sqln 'redis://localhost/0'
 sqln 'valkey://localhost/0'
 sqln 'kafka://localhost:9092'
 sqln 'databricks://adb-1234.azuredatabricks.net/main?warehouse=abc123'
+sqln 'clickhouse://default@localhost/my_database'
+sqln 'libsql://my-db-my-org.turso.io'
 ```
 
 For PostgreSQL and MySQL, SQLN asks for a password when the URI omits it in an interactive terminal.
 For password-protected Redis, Valkey, or Kafka with SASL, use the connection form to enter the password without shell-history exposure.
 For Databricks, type a personal access token in the **Token** field of the form. The path of the connection text is the start catalog, and `warehouse=<id>` is the SQL warehouse.
+ClickHouse uses its HTTP interface. The default port is 8123; ClickHouse Cloud uses 8443, so write the port in the connection text. The path is the start database.
+For Turso, type the database token in the **Token** field of the form. A connection text has no database path, because each libSQL database has its own URL. A local `sqld` runs without a token, for example `libsql://127.0.0.1:8080`.
 
 A command-line connection lasts for the session only. It does not create a saved connection or saved consoles for that target.
+
+A command-line target also takes the options of the connection form, as flags or as URI parameters:
+
+```sh
+sqln app.db --read-only --busy-timeout 10 --foreign-keys on
+sqln 'postgres://alice@db.example.com/app' --production --pool 2 --sql-timeout 0
+sqln 'mysql://alice@db.example.com/app?read_only=true&connect_timeout=5'
+sqln 'kafkas://kafka.example.com:9093?registry=https://registry.example.com' --registry-user reader --max-scan 5000
+```
+
+| Flag | URI parameter | Applies to |
+|---|---|---|
+| `--read-only` | `read_only=true` | All, except Kafka |
+| `--production` | `production=true` | All |
+| `--pool <n>` | `pool=<n>` | All |
+| `--connect-timeout <s>` | `connect_timeout=<s>` | Network connections |
+| `--sql-timeout <s>` (0 removes the limit) | `sql_timeout=<s>` | All |
+| `--idle-timeout <s>` (0 keeps sessions open) | `idle_timeout=<s>` | All |
+| `--foreign-keys on\|off` | — | SQLite |
+| `--busy-timeout <s>` | — | SQLite |
+| `--registry-user <user>` | `registry_user=<user>` | Kafka with `registry=` |
+| `--max-scan <n>` | `max_scan=<n>` | Kafka, not with `--execute` |
+
+Set each option in the URI or in its flag, not in both. The options need a target: a saved connection keeps the options of its form.
+With `--registry-user`, SQLN asks for the Schema Registry password on the terminal.
+The URI field of the connection form refuses these parameters; use the form fields there.
 To save a connection, start `sqln` and add it through the navigator.
 
 **Do not place passwords in shell commands.** A URI password can appear in shell history and process arguments.
@@ -307,6 +339,7 @@ GROUP billing
 See the [Kafka guide](docs/KAFKA.md) for a full walk-through with more examples.
 
 Press `Ctrl+P` for the command palette or `F1` for help in the main panels.
+The palette also finds each field of the current connection and of the Settings dialog: type `pool limit` and press `Enter` to open the field.
 
 ## Keyboard guide
 
@@ -719,8 +752,14 @@ Use `p` in the navigator to remove a saved password. Removing a connection asks 
 
 ### TLS
 
-Remote addresses use TLS with certificate and hostname verification by default.
-`localhost`, loopback IP addresses, and Unix sockets default to no TLS.
+Without a TLS choice, SQLN uses the automatic mode:
+
+- A remote address uses TLS with certificate and hostname verification. When the server answers that it has no TLS, SQLN connects without TLS and writes a notice in **Messages** (stderr in batch mode).
+- `localhost`, loopback IP addresses, and Unix sockets start without TLS. When the server refuses a connection without TLS, SQLN connects with verified TLS.
+- A certificate or hostname error never causes a connection without TLS.
+- Kafka, Databricks, ClickHouse, and libSQL do not retry: a remote address uses verified TLS, and a local address uses no TLS.
+
+The automatic mode applies when the connection text has no `sslmode` and no TLS files, when the form TLS field is **Automatic**, and when `config.json` has no `tls` object.
 Use `sslmode=verify-full` to require verified TLS explicitly, including for a local endpoint:
 
 ```sh
@@ -734,11 +773,12 @@ The form also accepts CA files and client certificates.
 URI parameters include `sslrootcert`, `sslcert`, and `sslkey`; a client certificate requires both certificate and key.
 MySQL client keys can use PKCS#1, PKCS#8, or SEC1 format. PostgreSQL client keys use PKCS#8 in the test setup.
 
-SQLN does not use an unverified TLS fallback. Even `sslmode=require` and `verify-ca` use full verification.
+SQLN does not use an unverified TLS connection. Even `sslmode=require` and `verify-ca` use full verification, and they never fall back to no TLS.
+`sslmode=prefer` and `allow` are refused, because they fall back after any TLS error; omit `sslmode` for the automatic mode.
 An explicit `sslmode=disable` removes TLS; use it only when the connection environment permits unencrypted traffic.
 `rediss`, `valkeys`, and `kafkas` always require verified TLS.
 Kafka takes `sasl=plain`, `sasl=scram-sha-256`, or `sasl=scram-sha-512` (the default) for a user, and `registry=<url>` for the Schema Registry.
-Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits.
+Kafka takes `group=<id>` for the consumer group id of the reads, such as a group with the prefix that the cluster permits. The form has the same **Consumer group** field. Without it, the reads use `sqln-read`. SQLN never joins the group and never commits. The **Max scan** field (`maxScan` in `config.json`) sets the `SCAN` that SQLN adds to a read without its own `SCAN`, from a console or an MCP agent. Empty uses **Kafka max scan** of Settings, 100000 by default.
 Kafka takes `topics=<patterns>` to show only some topics in the catalog, such as `topics=orders.*,!*.dlq`. The form has the same **Topics** field. Reads of other topics still run.
 Without a CA file, Kafka verifies with the system roots only.
 
@@ -769,7 +809,7 @@ sqln mcp
 ```
 
 `target` is one SQLite file path, one DuckDB target with the `duckdb:` scheme, or one connection URI. SQLN asks before creating a missing file.
-Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, `kafkas`, and `databricks`.
+Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `redis`, `rediss`, `valkey`, `valkeys`, `kafka`, `kafkas`, `databricks`, `clickhouse`, and `libsql`.
 
 | Option | Purpose |
 |---|---|
@@ -786,7 +826,7 @@ Supported URI schemes include `postgres`, `postgresql`, `mysql`, `mariadb`, `red
 | `--log <file>` | Write the event log |
 | `-h`, `--help` | Show command-line help |
 | `-V`, `--version` | Show the version |
-| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, or `databricks` for an unconnected console; development option |
+| `--dialect <name>` | Set `postgres`, `mysql`, `sqlite`, `duckdb`, `redis`, `kafka`, `databricks`, or `clickhouse` for an unconnected console; development option |
 
 ### Execution without the terminal interface
 
@@ -856,7 +896,9 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 | Native mouse selection does not work | SQLN captures the mouse; iTerm supports native selection while you hold `Option` |
 | Icons appear as empty boxes | Choose Unicode icons, or install and select a Nerd Font |
 | Theme colors look wrong | Choose `ansi`, or use `NO_COLOR=1 sqln` |
-| A remote connection fails TLS verification | Check the hostname, CA chain, system clock, and configured CA file |
+| An error has a `Hint:` line | The failure comes from a setting of the connection or a rule of the server. The hint names the field to change, or the administrator to ask |
+| A remote connection fails TLS verification | Check the hostname, CA chain, system clock, and configured CA file. A certificate error never falls back to no TLS |
+| Messages shows "SQLN connected without TLS" | The server has no TLS. Turn on TLS on the server, or set TLS to **Off** (`sslmode=disable`) to make the choice explicit |
 | The Linux vault is unavailable | Check the session D-Bus and Secret Service; use session-only passwords if necessary |
 | SQLite cannot open a file | Check that the file exists and that its folder and file permissions allow access |
 | A result contains fewer rows than expected | Check the row cap, page controls, and result-memory budget |
@@ -872,10 +914,16 @@ A positional `.sql` path is not a script-opening argument; positional file targe
 - DuckDB lacks schema compare, ER diagram, the DDL window, `EXPLAIN`, grid editing, and foreign-key reads. A read-only DuckDB connection opens the file with `access_mode = READ_ONLY`; the global read-only preference refuses a write in the connector instead, because a DuckDB connection cannot change its access mode. The bundled build compiles DuckDB and makes the first build long.
 - A DuckDB console can `ATTACH` other databases. Their schemas appear in the navigator with the `catalog.schema` name, and SQLN opens their tables with the catalog name, because a schema name alone cannot reach them. An `ATTACH` is not saved in the database file: it ends when the connection closes. A local DuckDB schema whose own name has a dot does not open, because SQLN reads the dot as the catalog separator.
 - Databricks connections read and run SQL only: they have no transactions, grid editing, query parameters, `EXPLAIN`, ER diagram, or schema compare. They accept a personal access token only. The API keeps no session, so `SET` and `USE` in a console do not reach the next statement; choose the schema in the navigator. The navigator lists Unity Catalog schemas as `catalog.schema`, without `hive_metastore`.
+- ClickHouse connections read and run SQL only: they have no transactions, grid editing, query parameters, `EXPLAIN`, ER diagram, or schema compare. The structure tab shows only the columns. A session keeps `SET` and temporary tables between its statements, but ClickHouse ends an idle session after its `session_timeout` (60 seconds by default), and the pool cleanup starts a new one. A statement with its own `FORMAT` clause shows each line of the answer in one `result` column. A statement without a result shows no count of changed rows.
+- libSQL connections use the SQLite rules: transactions, grid editing, query parameters, `EXPLAIN QUERY PLAN`, ER diagram, and schema compare. The server cannot stop a statement: **Stop** ends the wait, and SQLN closes the session. A result arrives in one answer, inside the memory limit. The server closes an idle session after a short time; an open transaction then ends without a commit, and SQLN shows the reason. `sqld` refuses temporary tables and many `PRAGMA` statements. A read-only libSQL connection refuses a write in the connector, because the server has no read-only session.
 - Grid editing changes, inserts, and deletes rows of keyed table tabs. Use SQL for binary values or other grids.
 - A console linked to an external `.sql` file lives in the session only: closing SQLN closes it, and the file keeps its text. The file must be UTF-8, and the link has no autosave: `Ctrl+S` and the close questions write it.
 - There is no integrated SSH tunnel, IAM authentication, or Kerberos authentication.
 - MariaDB has no tree plan, so `Ctrl+W E` shows the error of the server. MySQL has no tree plan for a write on one table.
+- CockroachDB has no JSON plan, and TiDB has no tree plan, so `Ctrl+W E` shows the error of the server. A manual `EXPLAIN` in a console still works.
+- Lock waits show the error of the server on CockroachDB and TiDB: CockroachDB has no `pg_blocking_pids`, and TiDB has no `sys.innodb_lock_waits`.
+- CockroachDB lists its server sessions, but the cancel and end commands show the error of the server, because it has no `pg_cancel_backend` or `pg_terminate_backend`. Use `CANCEL QUERY` or `CANCEL SESSION` in a console.
+- The navigator hides the `crdb_internal` schema of CockroachDB and the `METRICS_SCHEMA` schema of TiDB with the other system schemas. A user schema with one of these names stays hidden too.
 - PostgreSQL `COPY FROM STDIN` and `COPY TO STDOUT` are not supported.
 - An ER diagram has no search, no zoom, and no export to an image file. The Mermaid copy holds the boxes on screen.
 - The lock waits of MySQL and MariaDB show InnoDB row locks from `sys.innodb_lock_waits`, without metadata locks. MariaDB needs version 10.6 or newer for that view. The age of a PostgreSQL wait is the age of the waiting query.
@@ -935,6 +983,8 @@ make test-integration
 ```
 
 The command starts the databases, loads the test environment, runs the tests, and stops the databases.
+The stack includes CockroachDB and TiDB for the compatible servers. YugabyteDB has no service, because its image is large; check it manually.
+It also includes ClickHouse and a libSQL server (`sqld`). Turso has no service; check it manually.
 
 For TLS coverage, use a Bash shell:
 

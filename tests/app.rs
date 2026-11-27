@@ -626,6 +626,65 @@ fn read_only_refuses_a_change() {
     assert_eq!(f.file_query("SELECT count(*) FROM t"), 0);
 }
 
+/// Returns the rows of the screen from the row with `text` and the next `count` rows.
+fn rows_after(screen: &str, text: &str, count: usize) -> Vec<String> {
+    let lines: Vec<&str> = screen.lines().collect();
+    let first = lines
+        .iter()
+        .position(|line| line.contains(text))
+        .unwrap_or_else(|| panic!("{text:?} is not on the screen:\n{screen}"));
+    lines[first..]
+        .iter()
+        .take(count + 1)
+        .map(|line| (*line).to_owned())
+        .collect()
+}
+
+#[test]
+fn a_read_only_refusal_shows_its_fix_on_the_next_line() {
+    for keyboard in [KeyboardMode::Conventional, KeyboardMode::Vim] {
+        let settings = Settings {
+            read_only: true,
+            ..Settings::default()
+        };
+        let name = format!("read-only-hint-{keyboard:?}");
+        let mut f = Fixture::with(&name, keyboard, settings, "CREATE TABLE t(a);");
+        f.run_script("INSERT INTO t VALUES (1);");
+        let screen = f.screen();
+        let rows = rows_after(&screen, "readonly", 2);
+        assert!(
+            rows[1..]
+                .iter()
+                .any(|row| row.contains("Hint: this connection is read only.")),
+            "{keyboard:?}:\n{screen}"
+        );
+    }
+}
+
+#[test]
+fn the_time_limit_shows_its_fix() {
+    let settings = Settings {
+        sql_timeout: Some(Duration::from_millis(50)),
+        ..Settings::default()
+    };
+    let mut f = Fixture::with("timeout-hint", KeyboardMode::Conventional, settings, "");
+    f.run_script(LONG);
+    let screen = f.screen();
+    let rows = rows_after(&screen, "the time limit ended", 2);
+    assert!(
+        rows[1..].iter().any(|row| row.contains("Hint: increase")),
+        "{screen}"
+    );
+}
+
+#[test]
+fn an_error_without_a_known_cause_shows_no_hint() {
+    let mut f = Fixture::new("no-hint");
+    f.run_script("SELECT * FROM missing;");
+    f.assert_sees("no such table");
+    assert!(!f.screen().contains("Hint:"), "{}", f.screen());
+}
+
 #[test]
 fn grid_keys_move_select_and_copy_tsv() {
     let mut f = Fixture::new("grid");
@@ -1609,6 +1668,7 @@ fn finish_with_stop(f: &mut Fixture, statuses: Vec<sqln::exec::StatementStatus>)
         };
         let end = Some(Default::default());
         let event = ExecEvent::StatementFinished {
+            fix: None,
             key,
             status,
             end,
@@ -1617,6 +1677,7 @@ fn finish_with_stop(f: &mut Fixture, statuses: Vec<sqln::exec::StatementStatus>)
         f.app.console_mut().on_event(event, &budget);
     }
     let event = ExecEvent::ExecutionFinished {
+        fix: None,
         console,
         execution: 7,
         end: ExecutionEnd::Stopped,
@@ -1644,6 +1705,7 @@ fn a_refused_execution_returns_the_console_to_idle() {
     f.app.console_mut().begin_execution(7, &plan, &budget);
     assert!(f.app.console().is_busy());
     let event = ExecEvent::ExecutionFinished {
+        fix: None,
         console,
         execution: 7,
         end: ExecutionEnd::Refused,
@@ -1664,6 +1726,7 @@ fn a_refused_execution_returns_the_console_to_idle() {
         index: 0,
     };
     let event = ExecEvent::StatementFinished {
+        fix: None,
         key,
         status: StatementStatus::Success,
         end: Some(Default::default()),
@@ -1671,6 +1734,7 @@ fn a_refused_execution_returns_the_console_to_idle() {
     };
     f.app.console_mut().on_event(event, &budget);
     let event = ExecEvent::ExecutionFinished {
+        fix: None,
         console,
         execution: 8,
         end: ExecutionEnd::Completed,

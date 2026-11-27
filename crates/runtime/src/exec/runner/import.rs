@@ -298,7 +298,7 @@ impl ConsoleTask {
         let (feed, mode) = match self.open_import(&mut lease, request).await {
             Ok(opened) => opened,
             Err(message) => {
-                self.finish(execution, ExecutionEnd::Failed, Some(message))
+                self.finish(execution, ExecutionEnd::Failed, Some(message.into()))
                     .await;
                 drop_or_release(lease).await;
                 return;
@@ -326,7 +326,8 @@ impl ConsoleTask {
         if let (Ok(Err(reason)) | Err(reason), None) = (closed, &outcome.message) {
             outcome.message = Some(reason);
         }
-        self.finish(execution, outcome.end, outcome.message).await;
+        self.finish(execution, outcome.end, outcome.message.map(Into::into))
+            .await;
     }
 }
 

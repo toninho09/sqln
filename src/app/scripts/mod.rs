@@ -333,9 +333,10 @@ impl App {
         let Some(root) = self.persist_root(scope) else {
             return;
         };
-        // The lock proves that no other instance has the script open.
-        match scripts::lock(&root, id) {
-            Ok(Some(_lock)) => {}
+        // The lock proves that no other instance has the script open. It stays held
+        // until the files are removed.
+        let _lock = match scripts::lock(&root, id) {
+            Ok(Some(lock)) => lock,
             Ok(None) => {
                 self.status = Some(text::SCRIPT_BUSY.to_owned());
                 return;
@@ -344,7 +345,7 @@ impl App {
                 self.status = Some(text::script_failed(id, &error.to_string()));
                 return;
             }
-        }
+        };
         if let Err(message) = scripts::remove(&root, id) {
             self.status = Some(text::script_failed(id, &message));
             return;

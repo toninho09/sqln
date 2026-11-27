@@ -975,3 +975,26 @@ fn the_search_of_a_live_result_follows_its_rows() {
     assert_eq!(search.total(), 0, "the match left the grid");
     assert_eq!(search.position(), 0);
 }
+
+#[test]
+fn a_sink_sends_the_column_types_only_when_the_connector_gives_them() {
+    let (events, mut inbox) = tokio::sync::mpsc::channel::<ExecEvent>(8);
+    let budget = std::sync::Arc::new(Budget::new(1 << 20));
+    let key = StatementKey {
+        console: 1,
+        execution: 1,
+        index: 0,
+    };
+    let mut sink = ResultSink::new(key, events, budget, 1000);
+    let types = |inbox: &mut tokio::sync::mpsc::Receiver<ExecEvent>| match inbox.try_recv() {
+        Ok(ExecEvent::Columns { types, .. }) => types,
+        other => panic!("{other:?}"),
+    };
+    sink.set_columns_blocking(vec!["a".to_owned()]);
+    assert!(types(&mut inbox).is_empty());
+    sink.set_typed_columns_blocking(
+        vec!["a".to_owned(), "b".to_owned()],
+        vec![Some("int4".to_owned()), None],
+    );
+    assert_eq!(types(&mut inbox), [Some("int4".to_owned()), None]);
+}

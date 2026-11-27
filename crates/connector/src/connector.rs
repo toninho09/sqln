@@ -50,6 +50,16 @@ pub mod databricks {
     pub use sqln_databricks::*;
 }
 
+#[cfg(feature = "clickhouse")]
+pub mod clickhouse {
+    pub use sqln_clickhouse::*;
+}
+
+#[cfg(feature = "libsql")]
+pub mod libsql {
+    pub use sqln_libsql::*;
+}
+
 /// The connector of a source whose driver is not in this build. It keeps the dialect of
 /// the source, so the connection stays visible and editable, and each connection
 /// attempt explains the missing feature.
@@ -119,6 +129,18 @@ pub fn network_connector(target: NetworkTarget) -> Arc<dyn Connector> {
             "Databricks",
             "databricks",
         )),
+        #[cfg(feature = "clickhouse")]
+        Engine::ClickHouse => Arc::new(clickhouse::ClickHouseConnector::new(target)),
+        #[cfg(not(feature = "clickhouse"))]
+        Engine::ClickHouse => Arc::new(Unavailable::new(
+            Dialect::ClickHouse,
+            "ClickHouse",
+            "clickhouse",
+        )),
+        #[cfg(feature = "libsql")]
+        Engine::Libsql => Arc::new(libsql::LibsqlConnector::new(target)),
+        #[cfg(not(feature = "libsql"))]
+        Engine::Libsql => Arc::new(Unavailable::new(Dialect::Sqlite, "libSQL", "libsql")),
     }
 }
 

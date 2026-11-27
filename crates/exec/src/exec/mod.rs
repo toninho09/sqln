@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::catalog::{Catalog, ColumnNote, ForeignKey, RelationRef};
 use crate::command_log::{LogEvent, TraceContext, TraceEvent};
-use crate::connector::{ConnectError, StatementEnd, TransactionState};
+use crate::connector::{ConnectError, Failure, Fix, StatementEnd, TransactionState};
 use crate::export::ExportWriter;
 use crate::grid::Row;
 use crate::import::ImportJob;
@@ -47,7 +47,7 @@ pub enum ExecutionEnd {
 pub enum ExecEvent {
     AgentMetadata {
         job: String,
-        result: Result<AgentMetadata, String>,
+        result: Result<AgentMetadata, Failure>,
     },
     EditFinished {
         console: ConsoleId,
@@ -72,6 +72,8 @@ pub enum ExecEvent {
     Columns {
         key: StatementKey,
         columns: Vec<String>,
+        /// The database type of each column. Empty when the connector gives no types.
+        types: Vec<Option<String>>,
         /// The row cap of a live result: at the cap, the grid drops its oldest rows.
         live: Option<usize>,
         /// The counts of a read that the connector updates while it runs.
@@ -98,12 +100,19 @@ pub enum ExecEvent {
         key: StatementKey,
         rows: usize,
     },
+    /// The Kafka read received `SCAN scan` at its end, because it had no `SCAN`.
+    ScanAdded {
+        key: StatementKey,
+        scan: u64,
+    },
     StatementFinished {
         key: StatementKey,
         status: StatementStatus,
         end: Option<StatementEnd>,
         /// Byte offset of an error in the statement, when the database reports it.
         error_offset: Option<usize>,
+        /// The configuration that can correct an error of the statement.
+        fix: Option<Fix>,
     },
     /// A statement did not answer, and closing the connection loses an open transaction.
     ConfirmClose {
@@ -115,6 +124,8 @@ pub enum ExecEvent {
         execution: ExecutionId,
         end: ExecutionEnd,
         message: Option<String>,
+        /// The configuration that can correct the failure of `message`.
+        fix: Option<Fix>,
     },
     TransactionChanged {
         console: ConsoleId,
@@ -169,11 +180,13 @@ impl From<SinkEvent> for ExecEvent {
             SinkEvent::Columns {
                 key,
                 columns,
+                types,
                 live,
                 progress,
             } => ExecEvent::Columns {
                 key,
                 columns,
+                types,
                 live,
                 progress,
             },
@@ -218,6 +231,7 @@ impl ExecEvent {
             | ExecEvent::ResultDone { key, .. }
             | ExecEvent::Notice { key, .. }
             | ExecEvent::LimitAdded { key, .. }
+            | ExecEvent::ScanAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.console),
             ExecEvent::AgentMetadata { .. }
             | ExecEvent::CommandLog { .. }
@@ -246,6 +260,7 @@ impl ExecEvent {
             | ExecEvent::ResultDone { key, .. }
             | ExecEvent::Notice { key, .. }
             | ExecEvent::LimitAdded { key, .. }
+            | ExecEvent::ScanAdded { key, .. }
             | ExecEvent::StatementFinished { key, .. } => Some(key.execution),
             _ => None,
         }

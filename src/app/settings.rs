@@ -47,7 +47,13 @@ impl App {
         let Some(root) = store.root(scope) else {
             return;
         };
-        match config::change_preferences(root, scope, preferences) {
+        let known = self
+            .modals
+            .settings_hashes
+            .iter()
+            .find(|(item, _)| *item == scope)
+            .and_then(|(_, hash)| *hash);
+        match config::change_preferences(root, scope, preferences, known) {
             Ok(hash) => {
                 if let Some(persist) = &mut self.persist
                     && let Some((_, known)) =

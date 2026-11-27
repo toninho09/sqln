@@ -175,6 +175,8 @@ impl<S: TlsStream + Unpin> TlsStream for TextIo<S> {
 pub(super) struct TextTls<T> {
     pub inner: T,
     pub enabled: Arc<AtomicBool>,
+    /// True after the server accepted the TLS request and the handshake started.
+    pub handshake: Arc<AtomicBool>,
 }
 
 impl<S, T> MakeTlsConnect<S> for TextTls<T>
@@ -192,6 +194,7 @@ where
         Ok(TextTls {
             inner: self.inner.make_tls_connect(domain)?,
             enabled: self.enabled.clone(),
+            handshake: self.handshake.clone(),
         })
     }
 }
@@ -208,6 +211,7 @@ where
     type Error = T::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Stream, Self::Error>> + Send>>;
     fn connect(self, stream: S) -> Self::Future {
+        self.handshake.store(true, Ordering::SeqCst);
         let future = self.inner.connect(stream);
         Box::pin(async move { Ok(TextIo::new(future.await?, self.enabled)) })
     }

@@ -278,11 +278,11 @@ impl Session {
     fn fill_sqlite_form(&mut self, name: &str, file: &str) {
         self.prefix('h');
         self.code(KeyCode::Char('a'));
-        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
+        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis,
+        // libSQL, SQLite.
+        for _ in 0..5 {
+            self.code(KeyCode::Left);
+        }
         self.focus_form(Field::Name);
         for letter in name.chars() {
             self.code(KeyCode::Char(letter));
@@ -758,8 +758,8 @@ fn a_new_connection_goes_to_the_project_file_by_default_without_a_password() {
     session.code(KeyCode::Char('a'));
     session.assert_sees("Scope");
     session.assert_sees("Project");
-    // `Right` goes from PostgreSQL through MySQL and Databricks to SQLite.
-    for _ in 0..3 {
+    // `Right` goes from PostgreSQL through MySQL, Databricks, and ClickHouse to SQLite.
+    for _ in 0..4 {
         session.code(KeyCode::Right);
     }
     session.focus_form(Field::Name);
@@ -817,7 +817,7 @@ fn two_scopes_can_use_the_same_name_and_one_scope_cannot() {
         session.press(ctrl('w'));
         session.code(KeyCode::Char('h'));
         session.code(KeyCode::Char('a'));
-        for _ in 0..3 {
+        for _ in 0..4 {
             session.code(KeyCode::Right);
         }
         session.focus_form(Field::Name);
@@ -2461,6 +2461,28 @@ fn the_settings_write_nothing_before_the_save() {
 }
 
 #[test]
+fn the_settings_save_the_kafka_max_scan() {
+    let (store, _) = two_connections("p-settings-max-scan");
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    // Row cap, Limit in SQL, and Kafka max scan.
+    for _ in 0..3 {
+        session.code(KeyCode::Tab);
+    }
+    session.assert_sees("Kafka max scan");
+    session.write("250");
+    // Data, Format JSON, System commands, and Save.
+    for _ in 0..4 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("settings are saved");
+    let text = fs::read_to_string(project.config_file()).unwrap();
+    assert!(text.contains("\"maxScan\": 250"), "{text}");
+}
+
+#[test]
 fn the_settings_write_only_the_scope_of_the_dialog() {
     let (store, _) = two_connections("p-settings-save");
     let global = fs::read_to_string(store.global.config_file()).unwrap();
@@ -2468,7 +2490,7 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2481,6 +2503,26 @@ fn the_settings_write_only_the_scope_of_the_dialog() {
     );
     // The connections and the other parts of the file stay.
     assert!(text.contains("third"), "{text}");
+}
+
+#[test]
+fn a_settings_save_after_an_outside_change_keeps_the_change_and_says_why() {
+    let (store, _) = two_connections("p-settings-outside");
+    let project = store.project.clone().unwrap();
+    let mut session = Session::start(&store);
+    session.open_results_settings();
+    session.write("77");
+    // Another program changes the file while the window is open.
+    let (mut preferences, known) = config::preferences_and_hash(&project, Scope::Project).unwrap();
+    preferences.show_system_commands = Some(true);
+    config::change_preferences(&project, Scope::Project, preferences, known).unwrap();
+    let outside = fs::read_to_string(project.config_file()).unwrap();
+    for _ in 0..7 {
+        session.code(KeyCode::Tab);
+    }
+    session.code(KeyCode::Enter);
+    session.assert_sees("Another program changed");
+    assert_eq!(fs::read_to_string(project.config_file()).unwrap(), outside);
 }
 
 #[test]
@@ -2503,7 +2545,7 @@ fn an_empty_field_removes_the_project_value_and_shows_the_global_value() {
     session.code(KeyCode::Backspace);
     session.code(KeyCode::Backspace);
     session.assert_sees("from global: 10");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2518,7 +2560,7 @@ fn a_settings_value_of_zero_stays_in_the_dialog_with_a_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..6 {
+    for _ in 0..7 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -2649,7 +2691,7 @@ fn a_new_file_goes_to_the_current_folder_with_its_full_path() {
     let Some(FormNote::Error(note)) = &session.app.form().unwrap().note else {
         panic!("the test must report the missing file");
     };
-    assert!(note.contains(&full.display().to_string()), "{note}");
+    assert!(note.message.contains(&full.display().to_string()), "{note}");
 
     session.press_form_button(Field::Save);
     session.assert_sees("Create it?");
@@ -3208,9 +3250,10 @@ fn shortcut_save_checks_changes_in_the_other_scope_before_writing() {
     session.click_text("[Record]");
     session.code(KeyCode::F(8));
     session.code(KeyCode::Enter);
-    let mut preferences = config::preferences(&store.global, Scope::Global).unwrap();
+    let (mut preferences, known) =
+        config::preferences_and_hash(&store.global, Scope::Global).unwrap();
     preferences.keymap = Some(serde_json::from_str(r#"{"conventional":{"quit":["f8"]}}"#).unwrap());
-    config::change_preferences(&store.global, Scope::Global, preferences).unwrap();
+    config::change_preferences(&store.global, Scope::Global, preferences, known).unwrap();
     session.click_text("[Save]");
     session.assert_sees("conflicts");
     session.assert_sees("SHORTCUTS");
@@ -3711,9 +3754,10 @@ fn a_save_writes_the_changes_of_all_sections() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("77");
-    // Back to the sidebar: Row cap, Limit in SQL, Data, Format JSON, System commands,
+    // Back to the sidebar: Row cap, Limit in SQL, Kafka max scan, Data, Format JSON,
+    // System commands,
     // Save, Cancel, and the sidebar.
-    for _ in 0..8 {
+    for _ in 0..9 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Up);
@@ -3737,7 +3781,7 @@ fn a_bad_value_of_a_closed_section_shows_the_note() {
     let mut session = Session::start(&store);
     session.open_results_settings();
     session.write("0");
-    for _ in 0..8 {
+    for _ in 0..9 {
         session.code(KeyCode::Tab);
     }
     // The sidebar opens the first section. Then the focus goes to Save.
@@ -3796,7 +3840,8 @@ fn system_commands_start_off_and_follow_the_preference_scope() {
     assert!(shown(&store));
     write_config(&project, r#"{"showSystemCommands":false}"#, &[]);
     assert!(!shown(&store));
-    config::change_preferences(&project, Scope::Project, Preferences::default()).unwrap();
+    let (_, known) = config::preferences_and_hash(&project, Scope::Project).unwrap();
+    config::change_preferences(&project, Scope::Project, Preferences::default(), known).unwrap();
     assert!(shown(&store));
 }
 
@@ -3862,9 +3907,9 @@ fn system_command_settings_show_and_hide_existing_records_without_removing_them(
 fn saved_system_command_visibility_applies_when_the_application_starts() {
     let (store, _) = two_connections("p-system-command-start");
     let project = store.project.as_ref().unwrap();
-    let mut preferences = config::preferences(project, Scope::Project).unwrap();
+    let (mut preferences, known) = config::preferences_and_hash(project, Scope::Project).unwrap();
     preferences.show_system_commands = Some(true);
-    config::change_preferences(project, Scope::Project, preferences).unwrap();
+    config::change_preferences(project, Scope::Project, preferences, known).unwrap();
     let mut session = Session::start(&store);
     session
         .app
@@ -4000,7 +4045,7 @@ fn a_saved_row_cap_and_limit_in_sql_reach_a_console_that_already_ran() {
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
     // Data, Format JSON, System commands, and Save.
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -4035,7 +4080,7 @@ fn a_save_of_the_limit_in_sql_writes_the_file() {
     session.code(KeyCode::Right);
     session.code(KeyCode::Right);
     // Data, Format JSON, System commands, and Save.
-    for _ in 0..4 {
+    for _ in 0..5 {
         session.code(KeyCode::Tab);
     }
     session.code(KeyCode::Enter);
@@ -5206,4 +5251,194 @@ fn an_edit_of_a_custom_theme_keeps_its_id_and_writes_at_the_save() {
     let theme = fs::read_to_string(store.global.themes_dir().join("mine.json")).unwrap();
     assert!(theme.contains(r#""name": "Renamed""#), "{theme}");
     assert!(theme.contains(r##""orange": "#005f87""##), "{theme}");
+}
+
+/// Opens the palette and writes a filter.
+fn palette_filter(session: &mut Session, filter: &str) {
+    session.press(ctrl('p'));
+    session.write(filter);
+}
+
+fn postgres_entry(id: &str, name: &str) -> String {
+    format!(
+        r#"{{"id":"{id}","name":"{name}","kind":"postgres","host":"h","database":"d","username":"u"}}"#
+    )
+}
+
+#[test]
+fn the_palette_opens_a_field_of_the_current_connection_with_its_value() {
+    let (store, base) = global_only("p-palette-field");
+    let db = database(&base, "one", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "pool limit");
+    session.assert_sees("Connection: Pool limit = 5 — one");
+    session.code(KeyCode::Enter);
+    let form = session.app.form().expect("the form is open");
+    assert_eq!(form.focus, Field::Pool);
+    assert_eq!(form.shown_section(), sqln::form::Group::Options);
+    assert_eq!(form.editing, Some(session.app.connections()[0].id));
+    session.assert_sees("Pool limit");
+}
+
+#[test]
+fn the_palette_lists_only_the_fields_of_the_kind_and_hides_the_password() {
+    let (store, base) = global_only("p-palette-kind");
+    let db = database(&base, "lite", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "lite", &db.display().to_string()),
+            postgres_entry("g2", "pg"),
+        ],
+    );
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "lock limit");
+    session.assert_sees("Connection: Lock limit (seconds) = 5 — lite");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "connection: port");
+    session.assert_sees(text_no_commands());
+    session.code(KeyCode::Esc);
+
+    // The explorer row is the current connection while the explorer has the focus.
+    session.go_to_connection("pg");
+    palette_filter(&mut session, "connection: password");
+    session.assert_sees("Connection: Password — pg");
+    session.assert_not_sees("Password =");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "connection: port");
+    session.assert_sees("Connection: Port = 5432 — pg");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "lock limit");
+    session.assert_not_sees("Connection: Lock limit");
+}
+
+fn text_no_commands() -> &'static str {
+    sqln::ui::text::NO_COMMANDS
+}
+
+#[test]
+fn a_connected_connection_opens_the_restricted_form_with_a_note() {
+    let (store, base) = global_only("p-palette-connected");
+    let db = database(&base, "e", "CREATE TABLE t (v INTEGER);");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "busy", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.prefix('m');
+    session.write("INSERT INTO t VALUES (1);");
+    session.press(crate::common::shift(KeyCode::F(5)));
+    for _ in 0..2_000 {
+        session.app.drain_events();
+        if session.app.console().in_transaction() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(session.app.console().in_transaction());
+    palette_filter(&mut session, "pool limit");
+    session.code(KeyCode::Enter);
+    let form = session.app.form().expect("the form is open");
+    assert!(form.display_only);
+    assert_eq!(form.focus, Field::Disconnect);
+    assert_eq!(
+        form.note,
+        Some(FormNote::Info(
+            "Disconnect to change Pool limit.".to_owned()
+        ))
+    );
+    session.assert_sees("Disconnect to change Pool limit.");
+    session.code(KeyCode::Esc);
+    assert!(session.app.form().is_none());
+
+    palette_filter(&mut session, "connection: theme");
+    session.code(KeyCode::Enter);
+    let form = session.app.form().expect("the form is open");
+    assert_eq!(form.focus, Field::Theme);
+    assert!(
+        session.app.console().in_transaction(),
+        "nothing disconnects"
+    );
+}
+
+#[test]
+fn the_palette_opens_a_setting_on_its_section() {
+    let (store, _) = reopening_store("p-palette-setting", "{}");
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "setting undo");
+    session.assert_sees("Setting: Undo (MiB) = Default: 64 — Editor");
+    session.code(KeyCode::Enter);
+    let form = session.app.settings_form().expect("the settings are open");
+    assert_eq!(form.focus, SettingsField::UndoLimit);
+    assert_eq!(SECTIONS[form.section].title, "Editor");
+    session.assert_sees("Undo (MiB)");
+
+    // The key of the provider has no value in the palette.
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "setting: key");
+    session.assert_not_sees("Key =");
+}
+
+#[test]
+fn without_a_store_or_a_definition_the_palette_has_no_field_rows() {
+    let mut session = Session::with(Options::default());
+    palette_filter(&mut session, "setting");
+    session.assert_not_sees("Setting: ");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "connection:");
+    session.assert_not_sees("Connection: ");
+}
+
+#[test]
+fn a_long_value_keeps_the_row_on_one_line_at_the_minimum_size() {
+    let (store, base) = global_only("p-palette-small");
+    let folder = base.join("a-folder-with-a-long-name-for-the-palette-row");
+    fs::create_dir_all(&folder).unwrap();
+    let db = database(&folder, "small", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "small", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "connection: file");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| session.app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let rows: Vec<String> = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
+        .collect();
+    let row = rows
+        .iter()
+        .find(|row| row.contains("Connection: File = "))
+        .unwrap_or_else(|| panic!("no file row:\n{}", rows.join("\n")));
+    assert!(row.contains("— small"), "{row}");
+}
+
+#[test]
+fn vim_mode_and_a_custom_palette_key_offer_the_same_rows() {
+    let (store, base) = global_only("p-palette-vim");
+    let db = database(&base, "one", "");
+    write_config(
+        &store.global,
+        r#"{"keyboardMode":"vim","keymap":{"vim":{"openPalette":["alt+p"]}}}"#,
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.press(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT));
+    session.write("pool limit");
+    session.assert_sees("Connection: Pool limit = 5 — one");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.form().map(|form| form.focus), Some(Field::Pool));
 }

@@ -39,7 +39,9 @@ impl Destination {
             engine: target.engine,
             address: target.address.clone(),
             user: target.user.clone(),
-            tls: target.tls.clone(),
+            // The automatic mode keeps the identity of its first attempt, so a saved
+            // password stays valid after this mode arrived.
+            tls: target.tls.first_try(&target.address),
         })
     }
 }
@@ -86,6 +88,8 @@ impl Identity {
             Engine::Redis => "redis",
             Engine::Kafka => "kafka",
             Engine::Databricks => "databricks",
+            Engine::ClickHouse => "clickhouse",
+            Engine::Libsql => "libsql",
         };
         let address =
             serde_json::to_string(&self.destination.address).map_err(|_| VaultError::Failed)?;

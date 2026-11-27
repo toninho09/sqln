@@ -51,11 +51,7 @@ fn check_widths(limit: usize, mut draw: impl FnMut(&mut Frame, &Theme)) {
 }
 
 fn commands(count: usize) -> Palette {
-    let command = Command {
-        action: Action::Help,
-        label: "a-command".to_owned(),
-        key: None,
-    };
+    let command = Command::action(Action::Help, "a-command".to_owned(), None);
     Palette::new(vec![command; count])
 }
 

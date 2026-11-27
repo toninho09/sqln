@@ -2,6 +2,54 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Groups in the help sidebar — 2026-11-27
+
+The user asked to put the items of the `F1` sidebar in groups, to find the topics more easily.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Groups | **Getting started**: Connect, Run SQL, Tables, Scripts. **Features**: Query, Data, Schema, Kafka. **AI**: AI, MCP. **Keys**: All keys and the key groups | Three groups in the old order; two groups | User choice |
+| Order | **Kafka** moves after **Schema**. The numbers of the titles follow the new order, 1 to 10 | Keep the old numbers | A title number shows the place of the topic |
+| Heading | An uppercase row in the hint style, one column after the border. The uppercase text is the label without colors | A divider line with the name | User choice |
+| Behavior | A heading is not a page. `Tab`, `Shift+Tab`, a click, and the palette skip it. When the sidebar scrolls up to the first page of a group, the heading shows too | A heading that the cursor can select | A heading opens no content |
+| Model | Each guide topic has a `group` field. A heading shows where the group changes. The key pages always have the **Keys** heading | A separate list of groups | A new topic needs only its group |
+| Scripts text | The sentence "The docs folder explains Kafka, AI, and MCP" goes away | Keep it | The guide now has these topics. The sentence made **Help: Scripts** come before **Help: Kafka** for `help kafka` |
+
+## More guide topics — 2026-11-27
+
+The user asked for tutorials in `F1` that teach how to use the application.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Form | More topics in the guide of `F1`, with the same parts: title, text, steps with the effective key, and examples | An interactive tutorial that waits for each step | User choice. A topic is data, with no new `Action` and no new shortcut |
+| Topics | **Query**: parameters, plans, format, diagnostics, find, and history. **Data**: export, import, grid edits, load more, count, auto-refresh, and `--execute`. **Schema**: structure, DDL, ER diagram, compare, foreign keys, sessions, and locks. **AI**: suggestions, AI completion, and AI explanations. **MCP**: client setup, `request_access`, the access levels, the agent commands, and the fields of **Settings > MCP** with their keys and defaults | Keep AI out, as the decision of 2026-11-13 did | User choice |
+| Place | In the groups of the sidebar. See [Groups in the help sidebar](#groups-in-the-help-sidebar--2026-11-27). `F1` still opens on the first topic | After **Scripts**, with the numbers 6 to 10 | The first version. The groups replaced it on the same day |
+| Visibility | Always shown, on each connection | Hide a topic when the connection does not have the feature | The same rule as the Kafka topic |
+
+## Settings in the palette — 2026-11-27
+
+The user asked to type a setting in `Ctrl+P`, such as `pool limit`, and open that field in its section.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Scope | The fields of the current connection form and the fields of the Settings dialog | Only the connection | User choice |
+| Row | **Connection: <field> = <value> — <connection>** and **Setting: <field> = <value> — <section>**, after the commands and before the help pages. A secret field and the provider key show no value | No value | User choice |
+| Current connection | The explorer row while the explorer has the focus, else the connection of the open tab. A connection without a saved definition has no rows | The connection of the console only | The same rule as the sessions and the locks |
+| Connected connection | The restricted form opens. When it does not show the field, the focus goes to **Disconnect**, with the note "Disconnect to change <field>." | A question that disconnects; only the visible fields | User choice |
+| Model | A palette row holds a field. No new `Action` and no new shortcut | One `Action` per field | The rule of the help pages. A new field needs no new command |
+| Settings rows | The palette reads the files as the Settings dialog does. A configuration that the dialog cannot open gives no setting rows | Show rows that fail | The dialog gives the reason when the user opens it |
+
+## Help pages in the palette — 2026-11-27
+
+The user asked to find help from `Ctrl+P`. For example, the words of a Kafka statement find the help page that explains it.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Pages | The palette lists each page of the help as **Help: <page>**: the guide topics, **All keys**, and each key group, after the commands | Only the guide topics | User choice |
+| Search | The filter of a help row reads the full text of the page: title, text, steps, and examples, or the keys of a group | Only the name and the title | User choice. `emit changes` finds **Help: Kafka** |
+| Model | A palette row holds a command or a help page. The guide stays data, with no new `Action` and no new shortcut | One `Action` per topic | User choice. A new topic needs no new command |
+| Open | A help row opens `F1` on its page. The rows show only when the help is available | A separate window | The help keeps its keys, filter, and copy |
+
 ## Connection order and folders — 2026-11-16
 
 The user asked to change the order of the connections in the explorer and to group them in folders, in the most friendly way. The user chose the points below.
@@ -656,6 +704,7 @@ The user asked for theme creation in Settings, with a full palette editor, both 
 | Save | The dialog save writes new or edited themes, then `config.json`, then removes deleted themes; nothing before it | Write each theme file at the editor exit | The dialog keeps its contract "writes nothing before the save". Each file write is atomic, but the group is not: on failure, the dialog reports the error and retains the draft for retry |
 | Delete | Refuse while in use, by the effective draft of the dialog or by a connection; otherwise the removal joins the save | Ask first with a dialog | The removal is reversible until the save, and the refusal explains the reason and the way out |
 | Conflicts | Each write carries the hash of its load, under `locks/themes.lock` | Replace without a check | The rule of `config.json` applies: another program's change never goes away silently |
+| Preferences conflict | The save of the preferences carries the hash of `config.json` when the dialog opened. A file that another program changed refuses the save, and the note asks to close and open the dialog again | Write the snapshot of the dialog over the file | User choice, 2026-11-27. The snapshot removed the change of another instance or of a hand edit without a message |
 | Damage | A file that cannot load gives a note at the start, in Settings, and at each reload; the other files load | Block the configuration | A theme is not critical data, and one damaged file cannot stop the connections |
 | Missing theme | The choice falls back to `auto`, with a note in the status bar | Keep the last colors or quit | The data is not critical, and the note names the theme and the fallback |
 | External change | The poll hashes a manifest of the folder names and contents, and the existing reload question covers the themes | Reload without a question | The rule of `config.json` applies, and `ReloadConfig` already reloads both |

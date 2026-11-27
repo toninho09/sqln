@@ -239,11 +239,11 @@ impl Fixture {
     fn fill_sqlite(&mut self, name: &str, path: &Path) {
         self.navigator();
         self.code(KeyCode::Char('a'));
-        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis, SQLite.
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
-        self.code(KeyCode::Left);
+        // `Left` goes backwards through the kinds from PostgreSQL: Kafka, DuckDB, Redis,
+        // libSQL, SQLite.
+        for _ in 0..5 {
+            self.code(KeyCode::Left);
+        }
         assert_eq!(self.app.form().unwrap().kind, Kind::Sqlite);
         self.focus_form(Field::Name);
         self.type_text(name);
@@ -949,34 +949,51 @@ fn a_failed_network_test_keeps_the_password_out_of_the_screen() {
 }
 
 #[test]
-fn the_form_suggests_tls_from_the_address_until_the_user_chooses() {
+fn the_form_starts_with_automatic_tls_and_cycles_the_three_values() {
+    use sqln::form::TlsChoice;
     let mut f = Fixture::new("form-tls", "");
     f.navigator();
     f.code(KeyCode::Char('a'));
-    assert!(f.app.form().unwrap().verify_tls);
+    assert_eq!(f.app.form().unwrap().tls, TlsChoice::Auto);
     f.focus_form(Field::Host);
-    f.type_text("localhost");
-    assert!(
-        !f.app.form().unwrap().verify_tls,
-        "a local address needs no TLS"
-    );
-    for _ in 0.."localhost".len() {
-        f.code(KeyCode::Backspace);
-    }
     f.type_text("db.example.test");
-    assert!(
-        f.app.form().unwrap().verify_tls,
-        "a remote address verifies"
+    assert_eq!(
+        f.app.form().unwrap().tls,
+        TlsChoice::Auto,
+        "the address does not change the choice"
     );
 
     f.focus_form(Field::Tls);
+    f.assert_sees("Automatic");
     f.code(KeyCode::Right);
-    assert!(!f.app.form().unwrap().verify_tls);
+    assert_eq!(f.app.form().unwrap().tls, TlsChoice::Verify);
+    f.code(KeyCode::Right);
+    assert_eq!(f.app.form().unwrap().tls, TlsChoice::Off);
+    f.code(KeyCode::Right);
+    assert_eq!(f.app.form().unwrap().tls, TlsChoice::Auto);
+    f.code(KeyCode::Left);
+    assert_eq!(f.app.form().unwrap().tls, TlsChoice::Off);
+}
+
+#[test]
+fn automatic_tls_with_a_ca_file_names_the_verify_value() {
+    let mut f = Fixture::new("form-tls-files", "");
+    f.navigator();
+    f.code(KeyCode::Char('a'));
+    f.focus_form(Field::Name);
+    f.type_text("files");
     f.focus_form(Field::Host);
-    f.code(KeyCode::Char('x'));
+    f.type_text("db.example.test");
+    f.focus_form(Field::User);
+    f.type_text("reader");
+    f.focus_form(Field::CaFile);
+    f.type_text("/c/ca.pem");
+    let error = f.app.form().unwrap().definition().unwrap_err();
+    assert_eq!(error.field, Field::Tls);
     assert!(
-        !f.app.form().unwrap().verify_tls,
-        "the choice of the user stays"
+        error.message.contains("Verify the certificate"),
+        "{}",
+        error.message
     );
 }
 

@@ -30,6 +30,12 @@ pub fn open_modal(frame: &mut Frame, area: Rect, title: &str, theme: &Theme) -> 
     inner
 }
 
+/// Returns the width of the contents of a modal with a sidebar, from the modal width.
+pub fn sidebar_content_width(width: u16) -> u16 {
+    // The left and right borders, the sidebar, and its divider.
+    width.saturating_sub(2 + SIDEBAR_WIDTH + 1 + LEFT + RIGHT)
+}
+
 /// The areas of a modal with a sidebar: the contents, the rows of the sidebar, and the
 /// fields over them.
 pub struct SidebarModal {
@@ -89,14 +95,20 @@ pub fn draw_divider(frame: &mut Frame, window: Rect, x: u16, theme: &Theme) {
 }
 
 /// Draws the rows of a sidebar and returns them. The open row stays marked when the
-/// focus goes to the fields, as the row of the explorer does.
+/// focus goes to the fields, as the row of the explorer does. A heading row starts
+/// one column after the border, in the hint style.
 pub fn draw_sidebar_rows(
     frame: &mut Frame,
     area: Rect,
-    titles: &[&str],
-    (open, focused): (usize, bool),
+    spec: &SidebarSpec,
     theme: &Theme,
 ) -> Vec<Rect> {
+    let SidebarSpec {
+        titles,
+        open,
+        focused,
+        headings,
+    } = *spec;
     let mut rows = Vec::new();
     for (y, (index, title)) in (area.y..).zip(titles.iter().enumerate()) {
         let row = Rect {
@@ -105,6 +117,17 @@ pub fn draw_sidebar_rows(
             ..area
         };
         rows.push(row);
+        if headings.contains(&index) {
+            frame.render_widget(
+                Paragraph::new(Span::styled(*title, theme.hint)),
+                Rect {
+                    x: row.x + 1,
+                    width: row.width.saturating_sub(1),
+                    ..row
+                },
+            );
+            continue;
+        }
         if index == open {
             let style = if focused {
                 theme.tree_selected
@@ -144,10 +167,13 @@ pub enum Placement {
     BottomRight,
 }
 
+#[derive(Clone, Copy)]
 pub struct SidebarSpec<'a> {
     pub titles: &'a [&'a str],
     pub open: usize,
     pub focused: bool,
+    /// The rows that are headings of groups, not items.
+    pub headings: &'a [usize],
 }
 
 pub struct Modal<'a> {
@@ -223,13 +249,7 @@ impl<'a> Modal<'a> {
         let (inner, sidebar, sidebar_rows, pane) = match self.sidebar {
             Some(spec) => {
                 let window = SidebarModal::open(frame, area, &self.title, theme);
-                let rows = draw_sidebar_rows(
-                    frame,
-                    window.sidebar,
-                    spec.titles,
-                    (spec.open, spec.focused),
-                    theme,
-                );
+                let rows = draw_sidebar_rows(frame, window.sidebar, &spec, theme);
                 (window.inner, Some(window.sidebar), rows, window.pane)
             }
             None => {

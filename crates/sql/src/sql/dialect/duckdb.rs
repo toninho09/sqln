@@ -1,4 +1,4 @@
-use super::{BASE, SqlDialect, Syntax};
+use super::{BASE, Backslash, SqlDialect, Syntax};
 use crate::catalog::RelationRef;
 use crate::sql::Dialect;
 use crate::sql::parameters::Parameter;
@@ -8,8 +8,14 @@ use crate::structure::{Scope, Section, SessionSignal};
 
 pub struct DuckDb;
 
+/// DuckDB reads strings and comments as PostgreSQL does: `$$…$$`, `E'…'` with backslash
+/// escapes, and nested block comments.
 const SYNTAX: Syntax = Syntax {
+    nested_block_comment: true,
+    string_backslash: Backslash::AfterEscapePrefix,
+    dollar_quote: true,
     dotted_schema: true,
+    file_names: true,
     ..BASE
 };
 

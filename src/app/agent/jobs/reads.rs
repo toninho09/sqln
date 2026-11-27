@@ -50,10 +50,12 @@ impl App {
         session: &str,
         connection: ConnectionId,
         refresh: bool,
+        schema: Option<&str>,
     ) -> Reply {
         let item = self.connection(connection).ok_or_else(missing)?;
+        let filter = schema.map(str::to_owned);
         if !refresh && let Some(catalog) = &item.catalog {
-            let value = catalog_value(catalog);
+            let value = catalog_value(catalog, schema)?;
             let text = serde_json::to_string(&value)
                 .map_err(|_| Error::new("encoding_failed", "Cannot encode the cached catalog."))?;
             if text.len() <= agent::PAGE_BYTES / 3 {
@@ -65,7 +67,7 @@ impl App {
                 Vec::new(),
                 vec![connection],
                 None,
-                Output::Catalog(connection, self.counters.catalog_reads),
+                Output::Catalog(connection, self.counters.catalog_reads, filter),
             )?;
             self.complete_agent_job(&job, Some(artifact));
             return self.agent_job_reply(session, &job);
@@ -79,7 +81,7 @@ impl App {
             vec![console],
             vec![connection],
             None,
-            Output::Catalog(connection, read),
+            Output::Catalog(connection, read, filter),
         )?;
         if let Some(item) = self.connection_mut(connection) {
             item.catalog_read = read;
@@ -90,7 +92,7 @@ impl App {
     pub(in crate::app) fn on_agent_metadata(
         &mut self,
         id: &str,
-        result: Result<AgentMetadata, String>,
+        result: Result<AgentMetadata, Failure>,
     ) {
         let Some(job) = self.agent.jobs.get(id) else {
             return;
@@ -107,13 +109,17 @@ impl App {
         }
         let text = match result {
             Ok(AgentMetadata::Catalog(catalog)) => {
-                let Output::Catalog(connection, read) = job.output else {
+                let Output::Catalog(connection, read, schema) = &job.output else {
                     self.fail_agent_job(id, "The metadata response has the wrong type.");
                     return;
                 };
-                let value = catalog_value(&catalog);
+                let (connection, read) = (*connection, *read);
+                let value = catalog_value(&catalog, schema.as_deref());
                 self.on_catalog_loaded(connection, read, Ok(catalog));
-                serde_json::to_string(&value).map_err(|_| "Cannot encode the catalog.".to_owned())
+                value.map_err(|error| error.message).and_then(|value| {
+                    serde_json::to_string(&value)
+                        .map_err(|_| "Cannot encode the catalog.".to_owned())
+                })
             }
             Ok(AgentMetadata::Fields(paths, notes)) => {
                 let Output::Fields(topic) = &job.output else {
@@ -123,7 +129,10 @@ impl App {
                 serde_json::to_string(&fields_value(topic, &paths, &notes))
                     .map_err(|_| "Cannot encode the fields.".to_owned())
             }
-            Err(message) => Err(message),
+            Err(failure) => {
+                self.fail_agent_job_with(id, &failure);
+                return;
+            }
         };
         match text.and_then(|text| Text::new(text, &self.budget).map_err(|error| error.message)) {
             Ok(text) => {
@@ -144,7 +153,11 @@ impl App {
     ) -> Reply {
         let item = self.connection(connection).ok_or_else(missing)?;
         if item.dialect == Dialect::Kafka {
-            if schema != crate::connector::kafka::TOPICS || kind != "table" {
+            // `topic` is the plain form, with any schema: a topic has no schema of its own.
+            // `table` in the schema `topics` stays for older agents.
+            let topic =
+                kind == "topic" || (kind == "table" && schema == crate::connector::kafka::TOPICS);
+            if !topic {
                 return Err(Error::new("unsupported", text::AGENT_KAFKA_DESCRIBE));
             }
             return self.agent_fields(session, connection, name);
@@ -378,6 +391,62 @@ pub(super) fn fields_value(
     value
 }
 
-pub(super) fn catalog_value(catalog: &crate::catalog::Catalog) -> Value {
-    json!({"current_schema":catalog.current_schema,"schemas":catalog.schemas.iter().map(|schema|json!({"name":schema.name,"relations":schema.relations.iter().map(|relation|json!({"name":relation.name,"kind":format!("{:?}",relation.kind).to_ascii_lowercase(),"columns":match &relation.columns {crate::catalog::Columns::Loaded(columns)=>Some(columns),_=>None}})).collect::<Vec<_>>(),"objects":schema.objects.iter().map(|object|json!({"name":object.name,"kind":format!("{:?}",object.kind).to_ascii_lowercase(),"detail":object.detail})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+/// The most schema names in a `schema_not_found` error.
+const SCHEMA_NAMES: usize = 20;
+
+/// Writes the catalog for the agent: with `schema`, only that schema. A schema that the
+/// catalog does not hold gives an error with the names that it holds.
+pub(super) fn catalog_value(
+    catalog: &crate::catalog::Catalog,
+    schema: Option<&str>,
+) -> Result<Value, Error> {
+    let schemas: Vec<_> = catalog
+        .schemas
+        .iter()
+        .filter(|item| schema.is_none_or(|name| item.name == name))
+        .collect();
+    if schema.is_some() && schemas.is_empty() {
+        let names: Vec<_> = catalog
+            .schemas
+            .iter()
+            .take(SCHEMA_NAMES)
+            .map(|item| crate::grid::printable(&item.name))
+            .collect();
+        return Err(Error::new(
+            "schema_not_found",
+            &text::agent_schema_not_found(&names, catalog.schemas.len()),
+        ));
+    }
+    let schemas: Vec<_> = schemas
+        .into_iter()
+        .map(|schema| {
+            let relations: Vec<_> = schema
+                .relations
+                .iter()
+                .map(|relation| {
+                    let columns = match &relation.columns {
+                        crate::catalog::Columns::Loaded(columns) => Some(columns),
+                        crate::catalog::Columns::NotLoaded => None,
+                    };
+                    json!({
+                        "name": relation.name,
+                        "kind": format!("{:?}", relation.kind).to_ascii_lowercase(),
+                        "columns_loaded": columns.is_some(),
+                        "columns": columns,
+                    })
+                })
+                .collect();
+            let objects: Vec<_> = schema
+                .objects
+                .iter()
+                .map(|object| json!({
+                    "name": object.name,
+                    "kind": format!("{:?}", object.kind).to_ascii_lowercase(),
+                    "detail": object.detail,
+                }))
+                .collect();
+            json!({"name": schema.name, "partial": schema.partial, "relations": relations, "objects": objects})
+        })
+        .collect();
+    Ok(json!({"current_schema": catalog.current_schema, "schemas": schemas}))
 }

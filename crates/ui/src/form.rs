@@ -11,6 +11,7 @@ use crate::connection::{
     DEFAULT_BUSY_SECONDS, DEFAULT_CONNECT_SECONDS, DEFAULT_IDLE_SECONDS, DEFAULT_POOL_LIMIT,
     DEFAULT_SQL_SECONDS, Definition, Source,
 };
+use crate::connector::Failure;
 use crate::connector::duckdb::DuckdbTarget;
 use crate::connector::sqlite::{SqliteTarget, validate_path};
 use crate::connector::target::{
@@ -56,6 +57,8 @@ pub enum Field {
     ConsumerGroup,
     /// The patterns of the topics that the Kafka catalog shows.
     Topics,
+    /// The most messages that an agent read of Kafka examines without its own `SCAN`.
+    MaxScan,
     /// The SQL warehouse id of a Databricks connection.
     Warehouse,
     File,
@@ -176,6 +179,8 @@ pub enum Kind {
     Duckdb,
     Kafka,
     Databricks,
+    ClickHouse,
+    Libsql,
 }
 
 impl Kind {
@@ -187,6 +192,8 @@ impl Kind {
             Kind::Redis => Some(Engine::Redis),
             Kind::Kafka => Some(Engine::Kafka),
             Kind::Databricks => Some(Engine::Databricks),
+            Kind::ClickHouse => Some(Engine::ClickHouse),
+            Kind::Libsql => Some(Engine::Libsql),
             Kind::Sqlite | Kind::Duckdb => None,
         }
     }
@@ -213,7 +220,8 @@ pub enum FormNote {
     Info(String),
     /// The result of an action that worked.
     Success(String),
-    Error(String),
+    /// A failure, with the hint of its fix on the next rows.
+    Error(Failure),
 }
 
 /// The window that chooses the visible schemas. It covers the form.
@@ -234,7 +242,7 @@ pub struct ConnectionForm {
     /// The stable identity of a new definition, including tests before its first save.
     pub connection_id: String,
     pub use_uri: bool,
-    pub verify_tls: bool,
+    pub tls: TlsChoice,
     /// The SASL mechanism of a Kafka connection with a user.
     pub sasl: Sasl,
     /// `None` keeps the default of SQLite.
@@ -262,8 +270,6 @@ pub struct ConnectionForm {
     /// The position of the cursor in the focused text, in characters.
     pub cursor: usize,
     texts: HashMap<Field, Zeroizing<String>>,
-    /// True after the user chose the TLS field. The form then stops its suggestion.
-    tls_chosen: bool,
     pub schema_list: Option<SchemaList>,
 }
 
@@ -283,15 +289,18 @@ pub fn schema_names(text: &str) -> Vec<String> {
     names
 }
 
-fn is_local_host(host: &str) -> bool {
-    if host.starts_with('/') {
-        return true;
-    }
-    Address::Tcp {
-        host: host.to_owned(),
-        port: 0,
-    }
-    .is_local()
+/// The value of the TLS field.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TlsChoice {
+    /// The address and the answer of the server choose the mode.
+    #[default]
+    Auto,
+    Verify,
+    Off,
+}
+
+impl TlsChoice {
+    pub const ALL: [TlsChoice; 3] = [TlsChoice::Auto, TlsChoice::Verify, TlsChoice::Off];
 }
 
 fn path_text(path: &std::path::Path) -> String {
@@ -314,7 +323,7 @@ impl ConnectionForm {
             credential: CredentialName::Session,
             connection_id: uuid::Uuid::new_v4().to_string(),
             use_uri: false,
-            verify_tls: true,
+            tls: TlsChoice::Auto,
             sasl: Sasl::default(),
             foreign_keys: None,
             read_only: false,
@@ -330,7 +339,6 @@ impl ConnectionForm {
             test: None,
             cursor: 0,
             texts: HashMap::new(),
-            tls_chosen: false,
             schema_list: None,
         };
         form.set(Field::Pool, DEFAULT_POOL_LIMIT.to_string());
@@ -357,7 +365,6 @@ impl ConnectionForm {
         form.editing = Some(id);
         form.display_only = display_only;
         form.focus = Field::Name;
-        form.tls_chosen = true;
         form.read_only = definition.read_only;
         form.production = definition.production;
         form.theme = definition.theme.clone();
@@ -405,6 +412,8 @@ impl ConnectionForm {
             Engine::Redis => Kind::Redis,
             Engine::Kafka => Kind::Kafka,
             Engine::Databricks => Kind::Databricks,
+            Engine::ClickHouse => Kind::ClickHouse,
+            Engine::Libsql => Kind::Libsql,
         };
         self.set(Field::Warehouse, target.databricks.warehouse.clone());
         self.sasl = target.kafka.sasl;
@@ -419,6 +428,9 @@ impl ConnectionForm {
             self.set(Field::ConsumerGroup, group.clone());
         }
         self.set(Field::Topics, target.kafka.topics.join(", "));
+        if let Some(scan) = target.kafka.max_scan {
+            self.set(Field::MaxScan, scan.to_string());
+        }
         match &target.address {
             Address::Tcp { host, port } => {
                 self.set(Field::Host, host.clone());
@@ -431,7 +443,11 @@ impl ConnectionForm {
         if let Some(password) = &target.password {
             self.set(Field::Password, password.expose().to_owned());
         }
-        self.verify_tls = matches!(target.tls, Tls::Verify(_));
+        self.tls = match target.tls {
+            Tls::Auto => TlsChoice::Auto,
+            Tls::Verify(_) => TlsChoice::Verify,
+            Tls::Disabled => TlsChoice::Off,
+        };
         if let Tls::Verify(files) = &target.tls {
             if let Some(ca) = &files.ca {
                 self.set(Field::CaFile, path_text(ca));
@@ -494,14 +510,14 @@ impl ConnectionForm {
             _ if self.use_uri => fields.extend([Field::Entry, Field::Uri, Field::Credential]),
             _ => {
                 fields.extend([Field::Entry, Field::Host, Field::Port]);
-                if self.kind != Kind::Kafka {
+                if !matches!(self.kind, Kind::Kafka | Kind::Libsql) {
                     fields.push(Field::Database);
                 }
-                // Databricks reads only the token, in the password field.
-                if self.kind == Kind::Databricks {
-                    fields.push(Field::Warehouse);
-                } else {
-                    fields.push(Field::User);
+                // Databricks and libSQL read only the token, in the password field.
+                match self.kind {
+                    Kind::Databricks => fields.push(Field::Warehouse),
+                    Kind::Libsql => {}
+                    _ => fields.push(Field::User),
                 }
                 fields.push(Field::Password);
                 if self.kind == Kind::Kafka {
@@ -527,7 +543,7 @@ impl ConnectionForm {
             fields.push(Field::Schemas);
         }
         if self.kind == Kind::Kafka {
-            fields.extend([Field::ConsumerGroup, Field::Topics]);
+            fields.extend([Field::ConsumerGroup, Field::Topics, Field::MaxScan]);
         }
         fields.push(Field::Pool);
         // SQLN only reads from Kafka, so the flag has no effect there.
@@ -550,10 +566,10 @@ impl ConnectionForm {
         fields
     }
 
-    /// Returns true when the explorer of the source can hide schemas. SQLite has one
-    /// schema, and the catalog of Kafka holds two fixed lists.
+    /// Returns true when the explorer of the source can hide schemas. SQLite and libSQL
+    /// have one schema, and the catalog of Kafka holds two fixed lists.
     fn has_schemas(&self) -> bool {
-        !matches!(self.kind, Kind::Sqlite | Kind::Kafka)
+        !matches!(self.kind, Kind::Sqlite | Kind::Libsql | Kind::Kafka)
     }
 
     /// Lists the sections that hold a field, in order.
@@ -644,7 +660,9 @@ impl ConnectionForm {
                     Kind::Postgres,
                     Kind::MySql,
                     Kind::Databricks,
+                    Kind::ClickHouse,
                     Kind::Sqlite,
+                    Kind::Libsql,
                     Kind::Redis,
                     Kind::Duckdb,
                     Kind::Kafka,
@@ -672,10 +690,7 @@ impl ConnectionForm {
                 };
             }
             Field::Sasl => self.sasl = next_choice(&Sasl::ALL, self.sasl, forward),
-            Field::Tls => {
-                self.verify_tls = !self.verify_tls;
-                self.tls_chosen = true;
-            }
+            Field::Tls => self.tls = next_choice(&TlsChoice::ALL, self.tls, forward),
             Field::ForeignKeys => {
                 let order = [None, Some(true), Some(false)];
                 let index = order
@@ -705,7 +720,6 @@ impl ConnectionForm {
             .map_or(value.len(), |(byte, _)| byte);
         value.insert_str(byte, text);
         self.cursor += text.chars().count();
-        self.after_edit();
     }
 
     fn delete_before_cursor(&mut self) {
@@ -718,15 +732,6 @@ impl ConnectionForm {
             && let Some((byte, _)) = value.char_indices().nth(cursor)
         {
             value.remove(byte);
-        }
-        self.after_edit();
-    }
-
-    /// The form suggests no TLS for a local address and verification for any other,
-    /// until the user chooses a value.
-    fn after_edit(&mut self) {
-        if self.focus == Field::Host && !self.tls_chosen {
-            self.verify_tls = !is_local_host(self.trimmed(Field::Host));
         }
     }
 
@@ -904,7 +909,8 @@ impl ConnectionForm {
             .map(Secret::new)
     }
 
-    /// A remote address without TLS is the explicit choice of the TLS field.
+    /// A remote address without TLS is the explicit choice of the TLS field. TLS files
+    /// need the explicit verification.
     fn tls(&self) -> Result<Tls, Invalid> {
         let ca = self.optional_path(Field::CaFile);
         let client = match (
@@ -918,13 +924,14 @@ impl ConnectionForm {
             }
             (Some(_), None) => return Err(invalid(Field::ClientKey, text::FORM_CLIENT_PAIR)),
         };
-        if self.verify_tls {
-            return Ok(Tls::Verify(TlsFiles { ca, client }));
+        let files = ca.is_some() || client.is_some();
+        match self.tls {
+            TlsChoice::Verify => Ok(Tls::Verify(TlsFiles { ca, client })),
+            TlsChoice::Auto if files => Err(invalid(Field::Tls, text::FORM_TLS_FILES_AUTO)),
+            TlsChoice::Auto => Ok(Tls::Auto),
+            TlsChoice::Off if files => Err(invalid(Field::Tls, text::FORM_TLS_FILES)),
+            TlsChoice::Off => Ok(Tls::Disabled),
         }
-        if ca.is_some() || client.is_some() {
-            return Err(invalid(Field::Tls, text::FORM_TLS_FILES));
-        }
-        Ok(Tls::Disabled)
     }
 
     fn network_target(&self, engine: Engine) -> Result<NetworkTarget, Invalid> {
@@ -960,6 +967,9 @@ impl ConnectionForm {
         }
         if engine == Engine::Databricks && host.starts_with('/') {
             return Err(invalid(Field::Host, text::FORM_DATABRICKS_SOCKET));
+        }
+        if engine.uses_http() && host.starts_with('/') {
+            return Err(invalid(Field::Host, text::form_http_socket(engine.label())));
         }
         Ok(NetworkTarget {
             engine,
@@ -1023,6 +1033,15 @@ impl ConnectionForm {
             .map_err(|message| invalid(Field::ConsumerGroup, message))?;
         let topics = topic_filter(self.trimmed(Field::Topics))
             .map_err(|message| invalid(Field::Topics, message))?;
+        let max_scan = match self.trimmed(Field::MaxScan) {
+            "" => None,
+            scan => Some(
+                scan.parse::<u64>()
+                    .ok()
+                    .filter(|scan| *scan > 0)
+                    .ok_or_else(|| invalid(Field::MaxScan, text::KAFKA_BAD_MAX_SCAN))?,
+            ),
+        };
         Ok(KafkaOptions {
             sasl: if self.use_uri { uri.sasl } else { self.sasl },
             registry,
@@ -1032,6 +1051,7 @@ impl ConnectionForm {
             } else {
                 topics
             },
+            max_scan,
         })
     }
 

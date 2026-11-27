@@ -2,6 +2,93 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## ClickHouse and libSQL connectors — 2026-11-27
+
+The user asked for ClickHouse and libSQL (Turso) connectors, and approved the plan below. This entry adds `sqln-clickhouse` and `sqln-libsql` to the driver list of "Driver crates, connector contract, and runtime".
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Protocol | `reqwest` for both: the HTTP interface of ClickHouse, and Hrana 3 (`POST /v3/pipeline`) for libSQL. `sqln_session::connector::http` holds the client that Databricks, ClickHouse, and libSQL share | The `clickhouse` and `libsql` crates | User choice. The `libsql` crate brings a second HTTP and TLS stack (hyper 0.14, rustls 0.22) and does not accept the TLS files of a connection. SQLN would use only the raw bytes of the `clickhouse` crate |
+| ClickHouse scope | Read and run: catalog, consoles, table filters, cancel, read only. No transactions, grid edit, parameters, plan, diagram, or compare | Grid edit with `ALTER TABLE … UPDATE` | User choice. A mutation runs later and has no rollback |
+| libSQL scope | The SQLite rules: `Dialect::Sqlite` and its family, with transactions, grid edit, parameters, plan, diagram, and compare | Read and run only | User choice. A Hrana stream keeps a transaction between requests |
+| Tests | `clickhouse/clickhouse-server` and `ghcr.io/tursodatabase/libsql-server` in `compose.test.yaml` and in the CI, and the fake HTTP server of `sqln-testkit` | Only the fake server | User choice |
+| Connection text | `clickhouse://user:password@host:8123/database` and `libsql://:token@host`. ClickHouse uses port 8123 by default, libSQL uses 443 | Port 8443 for ClickHouse; a `turso://` alias | ClickHouse Cloud users copy a text with the port. No aliases, as in "Compatible servers" |
+| Credentials | ClickHouse needs a user and sends it and the password in headers. libSQL has no user, and the token in the password field is optional, because a local `sqld` has no authentication | A token that is always required | `sqld` in the tests and in local work has no token |
+| Database | ClickHouse: the start database, and the databases are the schemas of the explorer (`Namespace::Database`). libSQL refuses a database and a schema list, because each database has its own URL | A libSQL database name | One URL, one database |
+| Form | **Type**: PostgreSQL, MySQL, Databricks, ClickHouse, SQLite, libSQL/Turso, Redis/Valkey, DuckDB, Kafka. libSQL shows **Token** and no **User** or **Database** | Last in the choice | The SQL servers stay together, and libSQL stays next to SQLite. `Right` needs four steps to SQLite, and `Left` needs five |
+| `config.json` | New kinds `clickhouse` and `libsql`. `version` stays 1 | A new version | Same rule as Databricks |
+
+Implementation decisions:
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| ClickHouse session | A random `session_id` for each session, so `SET` and temporary tables stay between statements. The cleanup takes a new id, which is a new server session without state | A connection check at each reservation | One request less, with the same clean state |
+| ClickHouse results | `default_format=TabSeparatedWithNamesAndTypes`, read line by line inside the memory limit. A statement with its own `FORMAT` clause shows each line in one `result` column. An error in the middle of the answer ends the statement | JSON formats | The text format keeps the bytes and `NULL` and reads in a stream |
+| ClickHouse cancel | `KILL QUERY WHERE query_id = '<id>' ASYNC` in a request without the session, because ClickHouse runs one request of a session at a time | Close the HTTP connection | The kill also stops a statement that writes |
+| ClickHouse read only | `readonly=2` in each request | The shared check of the connector | The server checks each statement. `2` keeps `SET` |
+| libSQL cleanup | `close` of the Hrana stream, and `Clean`. A failed close gives `Discard` | `Discard` each time | A new stream is a new connection on the server |
+| libSQL cancel | Hrana cannot stop a statement. The cancel ends the wait, and the session closes, because its stream state is unknown | No cancel | The user gets the console back |
+| libSQL read only | The shared check of the connector refuses a write, as Databricks does | `PRAGMA query_only` | `sqld` refuses `PRAGMA query_only` and temporary tables |
+| libSQL closed stream | A refusal on an open stream ends the session with a reason, and the transaction state is `Unknown` | Open a new stream in silence | A transaction would end without a word |
+| SQLite catalog | The catalog queries move to `sqln_session::connector::sqlite`, and both SQLite drivers use them | A copy in each driver | One place |
+
+Known limits:
+
+- A libSQL result arrives in one answer. It must fit in the memory limit.
+- ClickHouse ends an idle session after its `session_timeout`, so a temporary table can go away between two statements of a console.
+- A ClickHouse statement without a result shows no count of changed rows.
+- Turso has no service in the tests; the tests use `sqld`.
+
+## Compatible servers — 2026-11-27
+
+The user asked for support of servers that speak the PostgreSQL or MySQL protocol, and approved the recommendations below. A check with real servers found the faults: YugabyteDB 2026.1 answers every query of SQLN; CockroachDB 26.4 and TiDB 8.5 need the fixes below.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Servers | CockroachDB and YugabyteDB with the PostgreSQL type, and TiDB with the MySQL type, as best effort, like MariaDB. The README names Neon, Supabase, AlloyDB, and TimescaleDB as PostgreSQL | Full support; a list of servers without a check, such as PlanetScale and SingleStore | User choice. Full support needs server detection and other queries |
+| Connection text | No new scheme. The servers use `postgresql://` and `mysql://` | `cockroachdb://`, `yugabyte://`, and `tidb://` | User choice. Their own documents give these texts |
+| Transaction probe | `COALESCE(current_setting('transaction_status', true) <> 'NoTxn', transaction_timestamp() <> statement_timestamp())` | A probe for each server after a detection | CockroachDB gives two different clocks in each statement, so the old probe showed an open transaction after each statement. PostgreSQL has no `transaction_status` setting, and a name without a dot cannot be a custom setting, so the value is `NULL` there |
+| Pool cleanup | `DISCARD PLANS` runs alone after the other steps. A refusal with `0A000` counts as clean | `DISCARD PLANS` in the same batch | CockroachDB refuses it, so the pool closed each session after each use |
+| System schemas | The navigator and the column reads hide `crdb_internal` on PostgreSQL. On MySQL, the filter compares the lowercase name and also hides `metrics_schema` | A filter for each server | TiDB gives the system schemas in capital letters and compares them by case. A user schema with these names is rare |
+| Missing features | The error of the server appears, and the README lists the limit: the plan of CockroachDB and TiDB, lock waits on both, and the cancel and end commands of CockroachDB sessions | A refusal of SQLN after a server detection | User choice |
+| Tests | `compose.test.yaml` starts CockroachDB and TiDB. `sqln-postgres` and `sqln-mysql` have one test binary each, and CI runs them with the database stack | YugabyteDB in the stack; no service | User choice. YugabyteDB passed the check, and its image is about 2 GB |
+
+## Configuration hints — 2026-11-27
+
+The user asked that a failure caused by a configuration tells how to correct it. This entry is the later step that the entry "Error kinds of the connector contract" names.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Source | `ConnectError` and `ExecError` get `fix: Option<Fix>`. A driver reads it from a code, an error type, or a setting: SQLSTATE, MySQL error number, SQLite result code, Redis error kind, librdkafka error code, `io::ErrorKind`, and `rustls::CertificateError` | Matching the message text | The rule of `ErrorKind` applies: text changes with the server version and the language |
+| Presentation | One line `Hint: …` after the error: the next line in **Messages** and in batch stderr, the rows below the error in the connection form, and the end of the line in the status bar | A command that opens the connection form | User choice |
+| Scope | Connection failures and execution failures: TLS mode, certificate, host, port, socket, file, database, pool limit, connect limit, `Read only`, statement time limit, and SQLite lock limit | Connection failures only | User choice |
+| Server rules | A rule of the server also gets a hint: `pg_hba.conf` (`28000`), a host that MySQL refuses (`1130`), a missing privilege, a read-only server or replica, and a certificate date | Hints only for settings of SQLN | User choice. The hint names the administrator when SQLN cannot correct it |
+| Read only | The runner keeps `ReadOnly` only when the `Read only` setting of the connection is on. Without the setting, the hint names the server, the file, or the transaction. The read policy of an agent gives no hint | One hint for each refusal | The user changes only the setting of the connection |
+| Explicit TLS | A refusal of an explicit TLS mode asks for the other mode. A fix of the driver stays, such as `ServerRule` for `28000` | Always the TLS hint | `28000` is also a rule of the user or of the host |
+| Host names | After a connection failure without a fix, `AutoTls` resolves a host name once. A failed resolution gives `Host` | A text match of the DNS error | `io::ErrorKind` has no stable kind for a DNS failure |
+| Refused port | After a refusal, `AutoTls` tries each address of the host. `Port` stays only when each address refuses. A refused Unix socket has no port, so it gets no hint | Trust the refusal of the driver | A driver reports the error of one address only, such as `::1` of `localhost`, and hides the error of another address |
+| MCP | `statements[].fix` and the `fix` of a task hold the hint text. The IPC version stays 3 | A new IPC version | IPC 3 is not released, and the field is optional in the reply |
+| Place | `Fix` and `Failure` are in `sqln-core`, with the hint texts. `sqln-session` exports them in `connector` | `sqln-session` | They need no other crate |
+| Databricks | No hint. Its texts already name the action | A hint for each code | The texts already give the next action |
+
+## Automatic TLS — 2026-11-26
+
+The user asked that a first connection does not fail with a TLS error, in the interface and in the command line. This entry replaces the rule "local without TLS, remote verifies" of the connection text, the form, and `config.json`.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| When | Only without a TLS choice: no `sslmode` and no TLS files in the text, **Automatic** in the form, or no `tls` object in `config.json` | Each connection | An explicit `verify-full` or `disable` keeps its meaning |
+| Cause of the fallback | Only an answer of the server that it has no TLS: `N` on PostgreSQL, no TLS flag on MySQL, a RESP answer to the probe on Redis | Any TLS error | A certificate or name error would give a connection without TLS to an attacker |
+| Directions | A remote address tries with TLS, then without TLS. A local address tries without TLS, then with TLS when the server refuses: SQLSTATE `28000` on PostgreSQL, error `3159` on MySQL, no RESP answer to the probe on Redis | One order for all addresses | A local server with its own certificate keeps working without TLS |
+| Notice | A fallback to no TLS writes "The server does not support TLS. SQLN connected without TLS." with the first statement, in **Messages** and on stderr | Silent fallback; ask the user | The user sees the state and needs no extra step. The upgrade to TLS writes no notice |
+| Memory | The connector keeps the mode that connected until the disconnect | Try again for each session; save the mode | The pool opens sessions without delay, and the file keeps the choice of the user |
+| Redis probe | `PING` without TLS and without a password on its own connection, before each attempt of the automatic mode | TLS request first | A plain server can wait for the line end of a TLS request, so the attempt would end at the time limit |
+| Kafka and Databricks | The first attempt only | Retry | librdkafka and the HTTP client give no clear signal of a server without TLS |
+| `config.json` | Automatic is an entry without `tls`; the format does not change | A new `"auto"` mode | Older versions read the file. Saved connections keep their `verify` or `disabled` |
+| Vault and trust | The identity of the automatic mode uses the mode of its first attempt | The text `auto` | Hand-written entries without `tls` keep their password and their trust |
+| `sslmode=prefer` and `allow` | Still refused | Map to the automatic mode | Those modes of `libpq` fall back after any TLS error |
+| TLS files without `sslmode` | Verify | Automatic | The files are a TLS choice |
+
 ## Lock waits — 2026-11-20
 
 The user asked for a panel that shows which session blocks which, and chose an own tab.
@@ -230,7 +317,7 @@ This request reopens the rule "MongoDB, Redis, and Kafka stay out of the first v
 | 4. Transactions | No manual mode; `MULTI` and `EXEC` work in a script | Tie the manual mode to `MULTI` and `EXEC` | Inside `MULTI`, a read answers `QUEUED`, without data |
 | 5. Continuous commands | Refuse `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE`, and `MONITOR` (replaced by "Continuous commands — 2026-11-09") | Continuous flow in the grid | The console has no continuous flow |
 | 6. Destructive commands | Without confirmation | Ask for confirmation | `DROP` also does not ask for confirmation |
-| 7. TLS of `redis://` | SQLN rule: local without TLS, remote verifies; `?sslmode=disable` turns it off; `rediss://` always uses TLS | `redis://` never uses TLS | The password only travels without TLS by explicit choice |
+| 7. TLS of `redis://` | SQLN rule: local without TLS, remote verifies (replaced by "Automatic TLS — 2026-11-26"); `?sslmode=disable` turns it off; `rediss://` always uses TLS | `redis://` never uses TLS | The password only travels without TLS by explicit choice |
 | 8. Topology | Single server only | Cluster; Cluster and Sentinel | Cluster and Sentinel change the pool |
 | 9. Result in the grid | Value in one cell, list in rows, map in the `field` and `value` columns, nested value as text | Everything as text | Uses the grid; needs RESP3 |
 | 10. Autocomplete | Command names, with a fixed list | Also key names | The key list can be partial |
@@ -285,7 +372,7 @@ These choices follow the rules above on the points the rules left open.
 | Late cancellation | Wait for the request before reusing the session | Reuse at the end of the statement | A late request could hit the next statement |
 | End of the request on PostgreSQL | Read until the server closes the request connection | Driver `cancel_query` | It returns at write time, and the `UPDATE` after a `SELECT` at the cap was cancelled in a load test |
 | `sslmode=require` | Verify the certificate | Encrypt without verifying, as in `libpq` | The plan forbids ignoring the verification |
-| `sslmode=prefer` and `allow` | Refuse the text | Accept | Those modes can use a connection without TLS in silence |
+| `sslmode=prefer` and `allow` | Refuse the text | Accept | Those modes can use a connection without TLS in silence. "Automatic TLS — 2026-11-26" adds a fallback only without `sslmode` |
 | Default CA | System and `webpki-roots` | Only one of the sources | Company CAs stay in the system; `mysql_async` already brings the second one |
 | Trust | Confirm per destination | Confirm per project | Follows the SSH model and does not depend on detecting clones |
 | Read only | Field per connection, applied by the database | Confirm `DELETE` without `WHERE` | The database applies the rule |
@@ -298,6 +385,8 @@ These choices follow the rules above on the points the rules left open.
 | Selector with an open transaction | Refuse the change | Change with `SET` or `USE` | A reserved session does not receive the context, and a transaction with an error refuses `SET` |
 | Disconnect with open work | Refuse and name the console | Ask and stop the console | Fewer states; the user resolves the transaction with the existing controls |
 | Disconnect with a catalog read | Wait for the session for up to 5 seconds | Report the end right after closing the idle ones | The message would be false, and the form stayed stuck in the rename mode |
+| Time of a catalog or column read | The statement time limit of the connection applies, as it applies to the metadata reads of the agent. At the limit the session closes | No limit | A read that waits for a lock held the place of the pool, and other consoles waited without a limit |
+| Connection change during an execution | The console keeps the change and uses it from its next command | Drop the change | The console kept the old settings, such as a connection without `Read only` |
 | Removed connection | The console stays open, without a connection | Close the consoles | The text is not lost, as in the scripts without connection |
 
 ## DuckDB — 2026-11-07

@@ -671,7 +671,42 @@ fn production_and_read_only_rules_apply_to_saved_connections() {
         false,
         json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"readOnly":true}]),
     );
-    assert_eq!(home.run(&authorized).status.code(), Some(1));
+    let output = home.run(&authorized);
+    assert_eq!(output.status.code(), Some(1));
+    // The hint of the fix stands on its own line after the error.
+    let errors = String::from_utf8_lossy(&output.stderr);
+    let hint = sqln::connector::Fix::ReadOnly.hint();
+    assert!(
+        errors.lines().any(|line| line == format!("sqln: {hint}")),
+        "{errors}"
+    );
+}
+
+#[test]
+fn continue_on_error_shows_the_fix_of_each_failure() {
+    let home = Home::new();
+    let path = home.database();
+    home.config(
+        false,
+        json!([{"id":"g1","name":"one","kind":"sqlite","file":path,"readOnly":true}]),
+    );
+    let output = home.run(&[
+        "--connection",
+        "one",
+        "--execute",
+        "INSERT INTO items VALUES (3); SELECT * FROM absent",
+        "--continue-on-error",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let errors = String::from_utf8_lossy(&output.stderr);
+    let hint = sqln::connector::Fix::ReadOnly.hint();
+    assert!(
+        errors
+            .lines()
+            .any(|line| line == format!("sqln: [1] {hint}")),
+        "{errors}"
+    );
+    assert!(!errors.contains("sqln: [2] Hint:"), "{errors}");
 }
 
 #[test]
@@ -1285,4 +1320,76 @@ fn mysql_multiple_results_write_every_set() {
 #[test]
 fn mysql_batch_credentials() {
     network_credentials("SQLN_TEST_MYSQL");
+}
+
+#[test]
+fn read_only_on_the_command_line_refuses_a_write() {
+    let home = Home::new();
+    success(&home.run(&[
+        "data.db",
+        "--execute",
+        "CREATE TABLE t (id INTEGER)",
+        "--yes",
+    ]));
+    let output = home.run(&[
+        "data.db",
+        "--read-only",
+        "--execute",
+        "INSERT INTO t VALUES (1)",
+    ]);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        success(&home.run(&[
+            "data.db",
+            "--read-only",
+            "--execute",
+            "SELECT count(*) AS n FROM t",
+            "--output",
+            "csv",
+        ])),
+        "n\n0\n"
+    );
+}
+
+#[test]
+fn a_read_only_target_does_not_create_its_file() {
+    let home = Home::new();
+    let output = home.run(&["new.db", "--read-only", "--yes", "--execute", "SELECT 1"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot create it"));
+    assert!(!home.0.join("new.db").exists());
+}
+
+#[test]
+fn connection_options_of_another_source_fail_before_the_connection() {
+    let home = Home::new();
+    for (args, message) in [
+        (
+            vec![
+                "postgres://u@127.0.0.1:1/d",
+                "--busy-timeout",
+                "1",
+                "--execute",
+                "SELECT 1",
+            ],
+            "Busy timeout is valid only for SQLite.",
+        ),
+        (
+            vec!["kafka://127.0.0.1:1?max_scan=5", "--execute", "TOPICS"],
+            "Max scan has no effect with --execute",
+        ),
+    ] {
+        let output = home.run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

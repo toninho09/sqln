@@ -26,11 +26,13 @@ use tokio_postgres::{
 };
 use tokio_postgres_rustls::MakeRustlsConnect;
 
+use super::auto_tls::AutoTls;
+use super::fix::network_fix;
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, MAX_NOTICES, Namespace,
-    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
-    describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind, ExecError, Fix, MAX_NOTICES,
+    Namespace, ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
+    TransactionState, describe, tls,
 };
 use crate::catalog::{
     Catalog, Columns, ForeignKey, KeyColumn, Relation, RelationKind, RelationRef, Schema,
@@ -47,26 +49,35 @@ use crate::text;
 
 /// The two clocks differ only inside a transaction. The simple protocol gives each
 /// call its own statement time, and a failed transaction refuses this call.
-const TRANSACTION_PROBE: &str = "SELECT transaction_timestamp() <> statement_timestamp()";
+/// CockroachDB gives two different clocks in each statement, but it gives the state in
+/// `transaction_status`. PostgreSQL has no such setting, so the first value is `NULL`.
+const TRANSACTION_PROBE: &str = "SELECT COALESCE(\
+    current_setting('transaction_status', true) <> 'NoTxn', \
+    transaction_timestamp() <> statement_timestamp())";
 /// The steps of `DISCARD ALL` without `DEALLOCATE ALL`. The driver keeps the statements
 /// of its type lookup in a cache, and `DEALLOCATE ALL` removes them from the server.
+/// `DISCARD PLANS` runs alone after these steps.
 const CLEANUP_SQL: &str = "CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ALL; \
-    UNLISTEN *; SELECT pg_advisory_unlock_all(); DISCARD PLANS; DISCARD TEMP; \
-    DISCARD SEQUENCES;";
+    UNLISTEN *; SELECT pg_advisory_unlock_all(); DISCARD TEMP; DISCARD SEQUENCES;";
+/// CockroachDB refuses this step with `0A000`, and it keeps no plans for a session to
+/// remove. The cleanup accepts that refusal.
+const DISCARD_PLANS_SQL: &str = "DISCARD PLANS";
 /// The statements of `PREPARE`. The statements of the driver are not in this list.
 const USER_STATEMENTS_SQL: &str = "SELECT name FROM pg_prepared_statements WHERE from_sql";
-const CATALOG_SQL: &str = "\
-    SELECT n.nspname, c.relname, c.relkind \
+const CATALOG_SQL: &str = concat!(
+    "SELECT n.nspname, c.relname, c.relkind \
     FROM pg_catalog.pg_namespace n \
     LEFT JOIN pg_catalog.pg_class c \
       ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'f', 'v', 'm') \
-    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
-    ORDER BY 1, 2";
+    WHERE ",
+    sqln_sql::postgres_user_schemas!(),
+    " ORDER BY 1, 2"
+);
 /// The routines, sequences, triggers, and types of each schema of `CATALOG_SQL`. A member
 /// of an extension stays out, and so do aggregates, window functions, and the internal
 /// triggers of the keys: `pg_get_functiondef` refuses an aggregate.
-const OBJECTS_SQL: &str = "\
-    SELECT n.nspname::text, o.name, o.kind, o.detail \
+const OBJECTS_SQL: &str = concat!(
+    "SELECT n.nspname::text, o.name, o.kind, o.detail \
     FROM ( \
       SELECT p.pronamespace AS space, p.proname::text AS name, \
         CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind, \
@@ -89,9 +100,11 @@ const OBJECTS_SQL: &str = "\
       FROM pg_catalog.pg_type t WHERE t.typtype IN ('e', 'd') \
     ) o \
     JOIN pg_catalog.pg_namespace n ON n.oid = o.space \
-    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' \
-    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
-      WHERE d.classid = o.class AND d.objid = o.oid AND d.deptype = 'e')";
+    WHERE ",
+    sqln_sql::postgres_user_schemas!(),
+    " AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d \
+      WHERE d.classid = o.class AND d.objid = o.oid AND d.deptype = 'e')"
+);
 const COLUMNS_SQL: &str = "\
     SELECT a.attname::text \
     FROM pg_catalog.pg_attribute a \
@@ -134,52 +147,57 @@ const DEFAULT_PORT: u16 = 5432;
 
 pub struct PostgresConnector {
     target: NetworkTarget,
+    auto_tls: AutoTls,
 }
 
 impl PostgresConnector {
     pub fn new(target: NetworkTarget) -> Self {
-        Self { target }
+        Self {
+            target,
+            auto_tls: AutoTls::default(),
+        }
     }
+}
 
-    fn config(&self) -> Config {
-        let target = &self.target;
-        let mut config = Config::new();
-        config.user(&target.user).application_name("sqln");
-        config
-            .keepalives(true)
-            .keepalives_idle(Duration::from_secs(30))
-            .keepalives_interval(Duration::from_secs(10))
-            .keepalives_retries(3);
-        if let Some(password) = &target.password {
-            config.password(password.expose());
-        }
-        if let Some(database) = &target.database {
-            config.dbname(database);
-        }
-        match &target.address {
-            Address::Tcp { host, port } => {
-                config.host(host).port(*port);
-            }
-            Address::Socket(path) => {
-                config.host_path(path);
-            }
-        }
-        // `Prefer`, the driver default, accepts a server without TLS.
-        config.ssl_mode(match target.tls {
-            Tls::Disabled => SslMode::Disable,
-            Tls::Verify(_) => SslMode::Require,
-        });
-        config
+/// The driver configuration of one attempt. The target has a resolved TLS mode.
+fn config(target: &NetworkTarget) -> Config {
+    let mut config = Config::new();
+    config.user(&target.user).application_name("sqln");
+    config
+        .keepalives(true)
+        .keepalives_idle(Duration::from_secs(30))
+        .keepalives_interval(Duration::from_secs(10))
+        .keepalives_retries(3);
+    if let Some(password) = &target.password {
+        config.password(password.expose());
     }
+    if let Some(database) = &target.database {
+        config.dbname(database);
+    }
+    match &target.address {
+        Address::Tcp { host, port } => {
+            config.host(host).port(*port);
+        }
+        Address::Socket(path) => {
+            config.host_path(path);
+        }
+    }
+    // `Prefer`, the driver default, accepts a server without TLS and gives no notice.
+    // `AutoTls` does the fallback, so that the user sees it.
+    config.ssl_mode(match target.tls {
+        Tls::Disabled => SslMode::Disable,
+        Tls::Verify(_) | Tls::Auto => SslMode::Require,
+    });
+    config
+}
 
-    /// `SslMode::Disable` never uses the value that this function returns without TLS.
-    fn tls(&self) -> Result<MakeRustlsConnect, ConnectError> {
-        let files = match &self.target.tls {
-            Tls::Verify(files) => tls::client_config(files)?,
-            Tls::Disabled => tls::unused_client_config()?,
-        };
-        Ok(MakeRustlsConnect::new(files))
-    }
+/// `SslMode::Disable` never uses the value that this function returns without TLS.
+fn tls_connect(target: &NetworkTarget) -> Result<MakeRustlsConnect, ConnectError> {
+    let files = match &target.tls {
+        Tls::Verify(files) => tls::client_config(files)?,
+        Tls::Disabled | Tls::Auto => tls::unused_client_config()?,
+    };
+    Ok(MakeRustlsConnect::new(files))
 }
 
 /// Reads one row of `OBJECTS_SQL`. A missing cell gives an empty text.
@@ -188,22 +206,28 @@ fn object_row(row: Vec<Option<String>>) -> [String; 4] {
     std::array::from_fn(|_| cells.next().unwrap_or_default())
 }
 
-fn connect_error(error: &tokio_postgres::Error) -> ConnectError {
+fn connect_error(error: &tokio_postgres::Error, address: &Address) -> ConnectError {
     let Some(database) = error.as_db_error() else {
-        return ConnectError::new(describe(error)).kind(client_error_kind(error));
+        return ConnectError::new(describe(error))
+            .kind(client_error_kind(error))
+            .fix(network_fix(error, address));
     };
     let message = format!("{} ({})", database.message(), database.code().code());
     // `28000` also covers a rule of `pg_hba.conf`, which a new password does not change.
     if *database.code() == SqlState::INVALID_PASSWORD {
         ConnectError::refused_password(message)
     } else {
-        ConnectError::new(message).kind(state_kind(database.code()))
+        ConnectError::new(message)
+            .kind(state_kind(database.code()))
+            .fix(state_fix(database.code()))
     }
 }
 
 /// The error of a socket before the protocol starts.
-fn socket_error(error: &io::Error) -> ConnectError {
-    ConnectError::new(error.to_string()).kind(ErrorKind::Connection)
+fn socket_error(error: &io::Error, address: &Address) -> ConnectError {
+    ConnectError::new(error.to_string())
+        .kind(ErrorKind::Connection)
+        .fix(network_fix(error, address))
 }
 
 /// The kind of an error that has no SQLSTATE: the connection or the client library.
@@ -219,6 +243,19 @@ fn client_error_kind(error: &tokio_postgres::Error) -> ErrorKind {
         ErrorKind::Connection
     } else {
         ErrorKind::Other
+    }
+}
+
+/// The configuration that can correct a SQLSTATE. See the appendix "PostgreSQL Error
+/// Codes". `28000` is a rule of `pg_hba.conf` or of the server, not a wrong password.
+fn state_fix(state: &SqlState) -> Option<Fix> {
+    match state.code() {
+        "3D000" => Some(Fix::Database),
+        "28000" => Some(Fix::ServerRule),
+        "53300" => Some(Fix::PoolLimit),
+        "42501" => Some(Fix::Privilege),
+        "25006" => Some(Fix::ReadOnly),
+        _ => None,
     }
 }
 
@@ -258,79 +295,121 @@ impl Connector for PostgresConnector {
     }
 
     async fn connect(&self) -> Result<Box<dyn Session>, ConnectError> {
-        let tls = self.tls()?;
-        let enabled = Arc::new(AtomicBool::new(false));
-        let notices = Arc::new(Mutex::new(Notices::default()));
-        let config = self.config();
-        let client = if matches!(self.target.tls, Tls::Disabled) {
-            match &self.target.address {
-                Address::Tcp { host, port } => {
-                    let socket = TcpStream::connect((host.as_str(), *port))
-                        .await
-                        .map_err(|error| socket_error(&error))?;
-                    socket
-                        .set_nodelay(true)
-                        .map_err(|error| socket_error(&error))?;
-                    let keepalive = socket2::TcpKeepalive::new()
-                        .with_time(Duration::from_secs(30))
-                        .with_interval(Duration::from_secs(10))
-                        .with_retries(3);
-                    socket2::SockRef::from(&socket)
-                        .set_tcp_keepalive(&keepalive)
-                        .map_err(|error| socket_error(&error))?;
-                    let (client, connection) = config
-                        .connect_raw(
-                            text_io::TextIo::new(socket, enabled.clone()),
-                            tokio_postgres::NoTls,
-                        )
-                        .await
-                        .map_err(|error| connect_error(&error))?;
-                    drive(connection, notices.clone());
-                    client
-                }
-                Address::Socket(folder) => {
-                    let socket =
-                        UnixStream::connect(folder.join(format!(".s.PGSQL.{DEFAULT_PORT}")))
-                            .await
-                            .map_err(|error| socket_error(&error))?;
-                    let (client, connection) = config
-                        .connect_raw(
-                            text_io::TextIo::new(socket, enabled.clone()),
-                            tokio_postgres::NoTls,
-                        )
-                        .await
-                        .map_err(|error| connect_error(&error))?;
-                    drive(connection, notices.clone());
-                    client
-                }
-            }
-        } else {
-            let (client, connection) = config
-                .connect(text_io::TextTls {
-                    inner: tls.clone(),
-                    enabled: enabled.clone(),
-                })
-                .await
-                .map_err(|error| connect_error(&error))?;
-            drive(connection, notices.clone());
-            client
-        };
-        enabled.store(true, Ordering::SeqCst);
-        let canceller = Arc::new(PostgresCanceller {
-            token: client.cancel_token(),
-            address: self.target.address.clone(),
-            tls,
-            requested: AtomicBool::new(false),
-        });
-        Ok(Box::new(PostgresSession {
-            client,
-            canceller,
-            transaction: TransactionState::None,
-            notices,
-            statements_lost: false,
-            trace: None,
-        }))
+        let (mut session, notice) = self.auto_tls.connect(&self.target, connect_once).await?;
+        session.connect_notice = notice;
+        Ok(Box::new(session))
     }
+}
+
+/// A plain attempt that the server refuses with `28000` can be a rule of `pg_hba.conf`
+/// that accepts only TLS, so the automatic mode tries again with TLS.
+fn plain_error(error: &tokio_postgres::Error, address: &Address) -> ConnectError {
+    let refused = error
+        .as_db_error()
+        .is_some_and(|database| *database.code() == SqlState::INVALID_AUTHORIZATION_SPECIFICATION);
+    let failure = connect_error(error, address);
+    if refused {
+        failure.tls_refused(TlsRefusal::ServerNeedsTls)
+    } else {
+        failure
+    }
+}
+
+/// The driver calls the TLS connector only after the server answers `S` to the TLS
+/// request. A TLS error before that call, without a database or socket error, is the
+/// answer `N`: the server has no TLS.
+fn tls_error(
+    error: &tokio_postgres::Error,
+    handshake: &AtomicBool,
+    address: &Address,
+) -> ConnectError {
+    let refused = !handshake.load(Ordering::SeqCst)
+        && error.as_db_error().is_none()
+        && client_error_kind(error) == ErrorKind::Other;
+    let failure = connect_error(error, address);
+    if refused {
+        failure.tls_refused(TlsRefusal::ServerHasNoTls)
+    } else {
+        failure
+    }
+}
+
+/// Opens one session with the resolved TLS mode of `target`.
+async fn connect_once(target: NetworkTarget) -> Result<PostgresSession, ConnectError> {
+    let tls = tls_connect(&target)?;
+    let enabled = Arc::new(AtomicBool::new(false));
+    let notices = Arc::new(Mutex::new(Notices::default()));
+    let config = config(&target);
+    let client = if matches!(target.tls, Tls::Disabled) {
+        match &target.address {
+            Address::Tcp { host, port } => {
+                let socket = TcpStream::connect((host.as_str(), *port))
+                    .await
+                    .map_err(|error| socket_error(&error, &target.address))?;
+                socket
+                    .set_nodelay(true)
+                    .map_err(|error| socket_error(&error, &target.address))?;
+                let keepalive = socket2::TcpKeepalive::new()
+                    .with_time(Duration::from_secs(30))
+                    .with_interval(Duration::from_secs(10))
+                    .with_retries(3);
+                socket2::SockRef::from(&socket)
+                    .set_tcp_keepalive(&keepalive)
+                    .map_err(|error| socket_error(&error, &target.address))?;
+                let (client, connection) = config
+                    .connect_raw(
+                        text_io::TextIo::new(socket, enabled.clone()),
+                        tokio_postgres::NoTls,
+                    )
+                    .await
+                    .map_err(|error| plain_error(&error, &target.address))?;
+                drive(connection, notices.clone());
+                client
+            }
+            Address::Socket(folder) => {
+                let socket = UnixStream::connect(folder.join(format!(".s.PGSQL.{DEFAULT_PORT}")))
+                    .await
+                    .map_err(|error| socket_error(&error, &target.address))?;
+                let (client, connection) = config
+                    .connect_raw(
+                        text_io::TextIo::new(socket, enabled.clone()),
+                        tokio_postgres::NoTls,
+                    )
+                    .await
+                    .map_err(|error| connect_error(&error, &target.address))?;
+                drive(connection, notices.clone());
+                client
+            }
+        }
+    } else {
+        let handshake = Arc::new(AtomicBool::new(false));
+        let (client, connection) = config
+            .connect(text_io::TextTls {
+                inner: tls.clone(),
+                enabled: enabled.clone(),
+                handshake: handshake.clone(),
+            })
+            .await
+            .map_err(|error| tls_error(&error, &handshake, &target.address))?;
+        drive(connection, notices.clone());
+        client
+    };
+    enabled.store(true, Ordering::SeqCst);
+    let canceller = Arc::new(PostgresCanceller {
+        token: client.cancel_token(),
+        address: target.address.clone(),
+        tls,
+        requested: AtomicBool::new(false),
+    });
+    Ok(PostgresSession {
+        client,
+        canceller,
+        transaction: TransactionState::None,
+        notices,
+        connect_notice: None,
+        statements_lost: false,
+        trace: None,
+    })
 }
 
 fn drive<S, T>(mut connection: tokio_postgres::Connection<S, T>, notices: Arc<Mutex<Notices>>)
@@ -560,7 +639,9 @@ fn exec_error(error: &tokio_postgres::Error, sql: &str) -> ExecError {
         Some(ErrorPosition::Original(position)) => byte_offset(sql, *position),
         _ => None,
     };
-    ExecError::with_kind(state_kind(database.code()), message).at(offset)
+    ExecError::with_kind(state_kind(database.code()), message)
+        .at(offset)
+        .fix(state_fix(database.code()))
 }
 
 #[derive(Default)]
@@ -611,9 +692,20 @@ struct PostgresSession {
     canceller: Arc<PostgresCanceller>,
     transaction: TransactionState,
     notices: Arc<Mutex<Notices>>,
+    /// The notice of the connection, such as a fallback to no TLS. The first statement
+    /// shows it in **Messages**.
+    connect_notice: Option<&'static str>,
     /// True after a statement that can remove the prepared statements of the driver.
     /// The driver cache then names statements that the server does not have.
     statements_lost: bool,
+}
+
+/// The columns of a statement before it runs: how to read each value, and the name of
+/// its type for the agent. Empty when the server cannot describe the statement.
+#[derive(Default)]
+struct Described {
+    kinds: Vec<ColumnKind>,
+    types: Vec<Option<String>>,
 }
 
 impl PostgresSession {
@@ -626,13 +718,22 @@ impl PostgresSession {
             .unwrap_or_default()
     }
 
+    /// Removes the notices of the statement, after the notice of the connection.
+    fn statement_notices(&mut self) -> Notices {
+        let mut notices = self.take_notices();
+        if let Some(notice) = self.connect_notice.take() {
+            notices.texts.insert(0, notice.to_owned());
+        }
+        notices
+    }
+
     /// Asks for the column types before the statement runs. A statement that fails
     /// here fails in the same way in the simple protocol, and it must not run twice:
     /// the second error would hide the first one in a transaction. After a loss of the
     /// driver statements, the type lookup fails, so all columns are text.
-    async fn column_kinds(&self, sql: &str) -> Result<Vec<ColumnKind>, ExecError> {
+    async fn column_kinds(&self, sql: &str) -> Result<Described, ExecError> {
         if self.transaction == TransactionState::Failed || self.statements_lost {
-            return Ok(Vec::new());
+            return Ok(Described::default());
         }
         let command =
             crate::limited::limited(format_args!("PostgreSQL Parse/Describe (prepare)\n{sql}"));
@@ -645,26 +746,33 @@ impl PostgresSession {
         )
         .await
         {
-            Ok(statement) => Ok(statement
-                .columns()
-                .iter()
-                .map(|column| column_kind(column.type_()))
-                .collect()),
+            Ok(statement) => Ok(Described {
+                kinds: statement
+                    .columns()
+                    .iter()
+                    .map(|column| column_kind(column.type_()))
+                    .collect(),
+                types: statement
+                    .columns()
+                    .iter()
+                    .map(|column| Some(column.type_().name().to_owned()))
+                    .collect(),
+            }),
             Err(error) if error.as_db_error().is_some() => Err(exec_error(&error, sql)),
-            Err(_) => Ok(Vec::new()),
+            Err(_) => Ok(Described::default()),
         }
     }
 
     async fn read(
         &self,
         sql: &str,
-        kinds: &[ColumnKind],
+        described: &Described,
         sink: &mut ResultSink,
     ) -> Result<Outcome, ExecError> {
         crate::trace::observe(
             self.trace.clone(),
             sql,
-            self.read_untraced(sql, kinds, sink),
+            self.read_untraced(sql, described, sink),
         )
         .await
     }
@@ -672,9 +780,10 @@ impl PostgresSession {
     async fn read_untraced(
         &self,
         sql: &str,
-        kinds: &[ColumnKind],
+        described: &Described,
         sink: &mut ResultSink,
     ) -> Result<Outcome, ExecError> {
+        let kinds = described.kinds.as_slice();
         let stream = self
             .client
             .simple_query_raw(sql)
@@ -698,11 +807,18 @@ impl PostgresSession {
             match message {
                 SimpleQueryMessage::RowDescription(columns) => {
                     outcome.has_columns = true;
-                    let names = columns
+                    let names: Vec<_> = columns
                         .iter()
                         .map(|column| column.name().to_owned())
                         .collect();
-                    sink.set_columns(names).await;
+                    // The types of the description belong to this result only when the
+                    // counts match: a statement with several results has no description.
+                    let types = if described.types.len() == names.len() {
+                        described.types.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    sink.set_typed_columns(names, types).await;
                 }
                 SimpleQueryMessage::Row(row) if storing => {
                     let flow = sink.push(row_values(&mut writer, &row, kinds)?).await;
@@ -815,12 +931,12 @@ impl Session for PostgresSession {
         self.canceller.requested.store(false, Ordering::SeqCst);
         self.take_notices();
         self.statements_lost |= removes_prepared_statements(sql, Dialect::Postgres);
-        let kinds = self.column_kinds(sql).await?;
+        let described = self.column_kinds(sql).await?;
         if self.canceller.requested.load(Ordering::SeqCst) {
             return Err(ExecError::new(text::STOPPED_BEFORE_SEND));
         }
-        let read = self.read(sql, &kinds, &mut sink).await;
-        let notices = self.take_notices();
+        let read = self.read(sql, &described, &mut sink).await;
+        let notices = self.statement_notices();
         sink.notices(notices.texts, notices.more).await;
         let (rows, limit) = sink.finish().await;
         read.map(|outcome| StatementEnd {
@@ -878,7 +994,18 @@ impl Session for PostgresSession {
             sql.push_str(CLEANUP_SQL);
             crate::trace::observe(self.trace.clone(), &sql, self.client.batch_execute(&sql))
                 .await
-                .ok()
+                .ok()?;
+            match crate::trace::observe(
+                self.trace.clone(),
+                DISCARD_PLANS_SQL,
+                self.client.batch_execute(DISCARD_PLANS_SQL),
+            )
+            .await
+            {
+                Ok(()) => Some(()),
+                Err(error) if error.code() == Some(&SqlState::FEATURE_NOT_SUPPORTED) => Some(()),
+                Err(_) => None,
+            }
         };
         match timeout(SESSION_LIMIT, cleanup).await {
             Ok(Some(())) => ResetOutcome::Clean,
@@ -1002,5 +1129,29 @@ impl PostgresSession {
         pairs
             .map(group_foreign_keys)
             .map_err(|error| ExecError::new(describe(&error)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_configuration_state_gives_its_fix() {
+        let cases = [
+            (SqlState::INVALID_CATALOG_NAME, Some(Fix::Database)),
+            (
+                SqlState::INVALID_AUTHORIZATION_SPECIFICATION,
+                Some(Fix::ServerRule),
+            ),
+            (SqlState::TOO_MANY_CONNECTIONS, Some(Fix::PoolLimit)),
+            (SqlState::INSUFFICIENT_PRIVILEGE, Some(Fix::Privilege)),
+            (SqlState::READ_ONLY_SQL_TRANSACTION, Some(Fix::ReadOnly)),
+            (SqlState::INVALID_PASSWORD, None),
+            (SqlState::SYNTAX_ERROR, None),
+        ];
+        for (state, fix) in cases {
+            assert_eq!(state_fix(&state), fix, "{}", state.code());
+        }
     }
 }

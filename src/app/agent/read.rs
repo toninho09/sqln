@@ -20,7 +20,28 @@ impl App {
     }
 
     pub(super) fn agent_connections(&self, offset: usize, limit: usize) -> Reply {
-        let connections:Vec<_> = self.connections.iter().skip(offset).take(limit.clamp(1,1000)).map(|connection|json!({"connection_id":connection.id.to_string(),"name":connection.plain_name(),"dialect":format!("{:?}",connection.dialect),"capabilities":{"namespace":format!("{:?}",connection.capabilities.namespace),"parameters":connection.capabilities.parameters,"transactions":connection.capabilities.transactions,"data_edit":false}})).collect();
+        // `production` and `read_only` tell the agent which runs ask the user or refuse.
+        let connections: Vec<_> = self
+            .connections
+            .iter()
+            .skip(offset)
+            .take(limit.clamp(1, 1000))
+            .map(|connection| {
+                json!({
+                    "connection_id": connection.id.to_string(),
+                    "name": connection.plain_name(),
+                    "dialect": crate::dialect::features(connection.dialect).agent_name(),
+                    "production": connection.is_production(),
+                    "read_only": self.is_read_only(connection.id),
+                    "default_schema": connection.default_schema,
+                    "capabilities": {
+                        "namespace": format!("{:?}", connection.capabilities.namespace),
+                        "parameters": connection.capabilities.parameters,
+                        "transactions": connection.capabilities.transactions,
+                    },
+                })
+            })
+            .collect();
         let next = offset.saturating_add(connections.len());
         Ok(
             json!({"connections":connections,"next_offset":(next < self.connections.len()).then_some(next),"total":self.connections.len()}),
@@ -135,7 +156,7 @@ impl App {
                 .any(|compare| compare.sides[0].id == tab && compare.is_busy())
     }
 
-    fn agent_grid(&self, tab: &str, result: usize) -> Result<&ResultTab, Error> {
+    pub(super) fn agent_grid(&self, tab: &str, result: usize) -> Result<&ResultTab, Error> {
         let tab = id(tab)?;
         if let Some(console) = self
             .tabs
@@ -224,12 +245,18 @@ impl App {
         }
         let next = offset + rows.len();
         let selection = grid.view.selection().map(|range| json!({"top":range.top,"bottom":range.bottom,"left":range.left,"right":range.right}));
-        Ok(
-            json!({"tab_id":tab,"result":result,"generation":version,"columns":grid.table.columns,"rows":rows,
+        // One type for each column; `null` where the connector gives no type.
+        let types: Vec<_> = (0..grid.table.columns.len())
+            .map(|column| grid.column_types.get(column).cloned().flatten())
+            .collect();
+        let mut page = json!({"tab_id":tab,"result":result,"generation":version,"columns":grid.table.columns,"column_types":types,"rows":rows,
             "next_offset":(next < grid.table.rows.len()).then_some(next),"loaded_rows":grid.table.rows.len(),"complete":grid.is_complete() && !self.agent_tab_busy(tab), "running":self.agent_tab_busy(tab),
             "limit":format!("{:?}",grid.limit),"cut_short":grid.cut_short,"pending_edits":!grid.edits.is_empty(),
-            "view":{"top":grid.view.top,"left":grid.view.left,"row":grid.view.row,"column":grid.view.col,"selection":selection}}),
-        )
+            "view":{"top":grid.view.top,"left":grid.view.left,"row":grid.view.row,"column":grid.view.col,"selection":selection}});
+        if let Some(read) = &grid.read {
+            page["read"] = read_value(read);
+        }
+        Ok(page)
     }
 
     pub(super) fn agent_cell(
@@ -306,4 +333,18 @@ fn cell(value: Cell<'_>) -> Value {
             json!({"kind":"binary","base64":base64::engine::general_purpose::STANDARD.encode(&*bytes)})
         }
     }
+}
+
+/// The counts of a finished read with a meter, such as a Kafka read. `end` tells why the
+/// read ended, so zero rows after `scan` does not look like an empty topic.
+pub(super) fn read_value(read: &crate::exec::ProgressSnapshot) -> Value {
+    use crate::exec::ReadEnd;
+    let end = match read.end {
+        ReadEnd::None => "grid",
+        ReadEnd::End => "end",
+        ReadEnd::Limit => "limit",
+        ReadEnd::Scan => "scan",
+        ReadEnd::Stopped => "stopped",
+    };
+    json!({"scanned": read.scanned, "matched": read.matched, "end": end})
 }

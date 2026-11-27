@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -28,6 +28,8 @@ sqln-duckdb = { path = "crates/duckdb" }
 sqln-redis = { path = "crates/redis" }
 sqln-kafka = { path = "crates/kafka" }
 sqln-databricks = { path = "crates/databricks" }
+sqln-clickhouse = { path = "crates/clickhouse" }
+sqln-libsql = { path = "crates/libsql" }
 sqln-connector = { path = "crates/connector" }
 sqln-store = { path = "crates/store" }
 sqln-exec = { path = "crates/exec" }
@@ -63,7 +65,7 @@ schemars = "1.2"
 similar = "3.2"
 sqlparser = { version = "0.64", features = ["visitor"] }
 base64 = "0.23"
-rusqlite = { version = "0.42", features = ["bundled"] }
+rusqlite = { version = "0.42", features = ["bundled", "column_decltype"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -130,7 +132,17 @@ workspace = true
 # Each feature adds one database driver. `cargo build --no-default-features --features
 # postgres,sqlite` builds a smaller binary. The tests and benches need the default set,
 # because they use the driver libraries directly.
-default = ["postgres", "mysql", "sqlite", "duckdb", "redis", "kafka", "databricks"]
+default = [
+    "postgres",
+    "mysql",
+    "sqlite",
+    "duckdb",
+    "redis",
+    "kafka",
+    "databricks",
+    "clickhouse",
+    "libsql",
+]
 postgres = ["sqln-connector/postgres"]
 mysql = ["sqln-connector/mysql"]
 sqlite = ["sqln-connector/sqlite"]
@@ -138,6 +150,8 @@ duckdb = ["sqln-connector/duckdb"]
 redis = ["sqln-connector/redis"]
 kafka = ["sqln-connector/kafka"]
 databricks = ["sqln-connector/databricks"]
+clickhouse = ["sqln-connector/clickhouse"]
+libsql = ["sqln-connector/libsql"]
 
 [target.'cfg(unix)'.dependencies]
 signal-hook.workspace = true

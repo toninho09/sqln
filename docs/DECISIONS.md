@@ -31,6 +31,17 @@ In the order of the original record. Undated entries are the early records or ca
 
 | Date | Decision | Area |
 |---|---|---|
+| 2026-11-27 | [ClickHouse and libSQL connectors](decisions/connectors.md#clickhouse-and-libsql-connectors--2026-11-27) | Connectors and sessions |
+| 2026-11-27 | [Compatible servers](decisions/connectors.md#compatible-servers--2026-11-27) | Connectors and sessions |
+| 2026-11-27 | [Groups in the help sidebar](decisions/interface.md#groups-in-the-help-sidebar--2026-11-27) | Interface |
+| 2026-11-27 | [More guide topics](decisions/interface.md#more-guide-topics--2026-11-27) | Interface |
+| 2026-11-27 | [Connection options on the command line](decisions/execution.md#connection-options-on-the-command-line--2026-11-27) | Execution |
+| 2026-11-27 | [Settings in the palette](decisions/interface.md#settings-in-the-palette--2026-11-27) | Interface |
+| 2026-11-27 | [Help pages in the palette](decisions/interface.md#help-pages-in-the-palette--2026-11-27) | Interface |
+| 2026-11-27 | [Configuration hints](decisions/connectors.md#configuration-hints--2026-11-27) | Connectors and sessions |
+| 2026-11-20 | [MCP context, Kafka bounds, and IPC 3](decisions/ai-mcp-agent.md#mcp-context-kafka-bounds-and-ipc-3--2026-11-20) | AI, MCP, and agent |
+| 2026-11-20 | [MCP review fixes](decisions/ai-mcp-agent.md#mcp-review-fixes--2026-11-20) | AI, MCP, and agent |
+| 2026-11-20 | [MCP agent facts](decisions/ai-mcp-agent.md#mcp-agent-facts--2026-11-20) | AI, MCP, and agent |
 | 2026-11-20 | [Result tabs by statement number](decisions/results-and-grid.md#result-tabs-by-statement-number--2026-11-20) | Results and grid |
 | 2026-11-20 | [Lock waits](decisions/connectors.md#lock-waits--2026-11-20) | Connectors and sessions |
 | 2026-11-20 | [Release profile and global allocator](decisions/build-and-workspace.md#release-profile-and-global-allocator--2026-11-20) | Build and workspace |

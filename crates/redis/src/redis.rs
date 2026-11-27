@@ -11,16 +11,18 @@ use redis::{
     RedisResult, ServerErrorKind, Value as Reply,
 };
 use rustls::pki_types::ServerName;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 
+use super::auto_tls::AutoTls;
+use super::fix::network_fix;
 use super::target::{Address, NetworkTarget, Tls};
 use super::{
-    Canceller, Capabilities, ConnectError, Connector, ErrorKind as Kind, ExecError, Namespace,
-    ResetOutcome, Session, SessionContext, StatementEnd, TransactionCommand, TransactionState,
-    describe, tls,
+    Canceller, Capabilities, ConnectError, Connector, ErrorKind as Kind, ExecError, Fix, Namespace,
+    ResetOutcome, Session, SessionContext, StatementEnd, TlsRefusal, TransactionCommand,
+    TransactionState, describe, tls,
 };
 use crate::catalog::{Catalog, Columns, Relation, RelationKind, Schema};
 use crate::grid::{Row, RowWriter, Value};
@@ -45,6 +47,13 @@ const IDENTITY: &[&str] = &["AUTH", "HELLO", "RESET"];
 
 fn connect_failed(error: impl std::fmt::Display) -> ConnectError {
     ConnectError::new(error.to_string())
+}
+
+/// The error of the socket or of TLS before the protocol starts.
+fn socket_failed(error: &std::io::Error, address: &Address) -> ConnectError {
+    ConnectError::new(error.to_string())
+        .kind(Kind::Connection)
+        .fix(network_fix(error, address))
 }
 
 /// `NOAUTH` means that the server needs a password and the connection has none.
@@ -95,11 +104,56 @@ async fn start(
     Ok(conn)
 }
 
-async fn open_tcp(host: &str, port: u16, tls_mode: &Tls) -> Result<Stream, ConnectError> {
-    let stream = TcpStream::connect((host, port))
+/// The wait for the first byte of the answer to the probe.
+const PROBE_LIMIT: Duration = Duration::from_secs(3);
+
+/// Sends `PING` without TLS and without a password, and returns true when the first byte
+/// of the answer is a RESP type. A server with TLS closes the connection, sends a TLS
+/// alert, or waits. A plain server can wait for the line end of a TLS request, so the
+/// automatic mode asks with this probe before the TLS request.
+async fn speaks_resp(host: &str, port: u16) -> Result<bool, ConnectError> {
+    let mut stream = TcpStream::connect((host, port))
         .await
         .map_err(connect_failed)?;
-    stream.set_nodelay(true).map_err(connect_failed)?;
+    if stream.write_all(b"PING\r\n").await.is_err() {
+        return Ok(false);
+    }
+    let mut first = [0; 1];
+    let answer = timeout(PROBE_LIMIT, stream.read(&mut first)).await;
+    Ok(matches!(answer, Ok(Ok(1))) && b"+-:$*_#,(!=%~>|".contains(&first[0]))
+}
+
+/// In the automatic mode, the probe refuses an attempt that the server cannot accept,
+/// before the password goes to the server.
+async fn probe(host: &str, port: u16, tls_mode: &Tls) -> Result<(), ConnectError> {
+    let resp = speaks_resp(host, port).await?;
+    match tls_mode {
+        Tls::Verify(_) if resp => Err(ConnectError::new(text::REDIS_SERVER_HAS_NO_TLS)
+            .tls_refused(TlsRefusal::ServerHasNoTls)),
+        Tls::Disabled if !resp => {
+            Err(ConnectError::new(text::REDIS_SERVER_NEEDS_TLS)
+                .tls_refused(TlsRefusal::ServerNeedsTls))
+        }
+        _ => Ok(()),
+    }
+}
+
+async fn open_tcp(
+    host: &str,
+    port: u16,
+    tls_mode: &Tls,
+    auto: bool,
+) -> Result<Stream, ConnectError> {
+    if auto {
+        probe(host, port, tls_mode).await?;
+    }
+    let address = Address::Tcp {
+        host: host.to_owned(),
+        port,
+    };
+    let failed = |error: std::io::Error| socket_failed(&error, &address);
+    let stream = TcpStream::connect((host, port)).await.map_err(failed)?;
+    stream.set_nodelay(true).map_err(failed)?;
     let Tls::Verify(files) = tls_mode else {
         return Ok(Box::new(stream));
     };
@@ -108,7 +162,7 @@ async fn open_tcp(host: &str, port: u16, tls_mode: &Tls) -> Result<Stream, Conne
     let stream = TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await
-        .map_err(connect_failed)?;
+        .map_err(failed)?;
     Ok(Box::new(stream))
 }
 
@@ -119,7 +173,7 @@ async fn open_socket(path: &std::path::Path, tls_mode: &Tls) -> Result<Stream, C
     }
     let stream = tokio::net::UnixStream::connect(path)
         .await
-        .map_err(connect_failed)?;
+        .map_err(|error| socket_failed(&error, &Address::Socket(path.to_owned())))?;
     Ok(Box::new(stream))
 }
 
@@ -128,26 +182,31 @@ async fn open_socket(_path: &std::path::Path, _tls_mode: &Tls) -> Result<Stream,
     Err(ConnectError::new(text::REDIS_NO_SOCKET))
 }
 
-/// Opens the stream of a target, with the TLS rule of SQLN.
-async fn open_stream(target: &NetworkTarget) -> Result<Stream, ConnectError> {
+/// Opens the stream of a target, with the TLS rule of SQLN. `auto` is true for an
+/// attempt of the automatic mode.
+async fn open_stream(target: &NetworkTarget, auto: bool) -> Result<Stream, ConnectError> {
     match &target.address {
-        Address::Tcp { host, port } => open_tcp(host, *port, &target.tls).await,
+        Address::Tcp { host, port } => open_tcp(host, *port, &target.tls, auto).await,
         Address::Socket(path) => open_socket(path, &target.tls).await,
     }
 }
 
-async fn open(target: &NetworkTarget) -> Result<MultiplexedConnection, ConnectError> {
+async fn open(target: &NetworkTarget, auto: bool) -> Result<MultiplexedConnection, ConnectError> {
     let info = connection_info(target)?;
-    start(&info, open_stream(target).await?).await
+    start(&info, open_stream(target, auto).await?).await
 }
 
 pub struct RedisConnector {
     target: NetworkTarget,
+    auto_tls: AutoTls,
 }
 
 impl RedisConnector {
     pub fn new(target: NetworkTarget) -> Self {
-        Self { target }
+        Self {
+            target,
+            auto_tls: AutoTls::default(),
+        }
     }
 }
 
@@ -176,7 +235,16 @@ impl Connector for RedisConnector {
         &self,
         trace: Option<crate::trace::TraceContext>,
     ) -> Result<Box<dyn Session>, ConnectError> {
-        let mut conn = open(&self.target).await?;
+        let auto = self.target.tls == Tls::Auto;
+        // The canceller and the live reads open their own connections with the mode
+        // that connected.
+        let ((resolved, mut conn), notice) = self
+            .auto_tls
+            .connect(&self.target, |target| async move {
+                let conn = open(&target, auto).await?;
+                Ok((target, conn))
+            })
+            .await?;
         // An account without this right can run commands, but Stop then closes the session.
         let client = crate::trace::observe(
             trace.clone(),
@@ -189,11 +257,12 @@ impl Connector for RedisConnector {
         Ok(Box::new(RedisSession {
             conn,
             canceller: Arc::new(RedisCanceller {
-                target: self.target.clone(),
+                target: resolved,
                 client,
             }),
             database: database.unwrap_or_else(|| "0".to_owned()),
             read_only: false,
+            connect_notice: notice,
             trace,
         }))
     }
@@ -209,7 +278,9 @@ impl RedisCanceller {
     /// The server can stop only a command that waits. Other commands answer 0.
     async fn unblock(&self, trace: Option<crate::trace::TraceContext>) -> Result<(), String> {
         let client = self.client.ok_or(text::REDIS_NO_STOP)?;
-        let mut conn = open(&self.target).await.map_err(|error| error.message)?;
+        let mut conn = open(&self.target, false)
+            .await
+            .map_err(|error| error.message)?;
         let command = crate::limited::limited(format_args!("CLIENT UNBLOCK {client} ERROR"));
         let stopped: i64 = crate::trace::observe(
             trace,
@@ -246,10 +317,14 @@ impl Canceller for RedisCanceller {
 
 fn exec_error(error: &RedisError) -> ExecError {
     let kind = error_kind(error);
+    // A replica answers `READONLY` to a write.
+    let fix = (error.kind() == ErrorKind::Server(ServerErrorKind::ReadOnly))
+        .then_some(Fix::ServerReadOnly);
     match (error.code(), error.detail()) {
         (Some(code), Some(detail)) => ExecError::with_kind(kind, format!("{code} {detail}")),
         _ => ExecError::with_kind(kind, describe(error)),
     }
+    .fix(fix)
 }
 
 /// The kind of a Redis error, from the kind of the library and the code of the server.
@@ -467,6 +542,9 @@ struct RedisSession {
     /// The database of the connection. A cleanup returns to it.
     database: String,
     read_only: bool,
+    /// The notice of the connection, such as a fallback to no TLS. The first statement
+    /// shows it in **Messages**.
+    connect_notice: Option<&'static str>,
 }
 
 impl RedisSession {
@@ -539,10 +617,10 @@ impl RedisSession {
             return Err(ExecError::new(text::REDIS_NO_REPLY));
         }
         if self.read_only && !SUBSCRIBE.contains(&upper.as_str()) && !self.is_read(name).await {
-            return Err(ExecError::with_kind(
-                Kind::Permission,
-                text::REDIS_READ_ONLY,
-            ));
+            return Err(
+                ExecError::with_kind(Kind::Permission, text::REDIS_READ_ONLY)
+                    .fix(Some(Fix::ReadOnly)),
+            );
         }
         Ok(())
     }
@@ -904,6 +982,9 @@ impl Session for RedisSession {
     }
 
     async fn run(&mut self, sql: &str, mut sink: ResultSink) -> Result<StatementEnd, ExecError> {
+        if let Some(notice) = self.connect_notice.take() {
+            sink.notices(vec![notice.to_owned()], 0).await;
+        }
         let read = self.read(sql, &mut sink).await;
         let (rows, limit) = sink.finish().await;
         read.map(|has_columns| StatementEnd {
@@ -989,6 +1070,55 @@ impl Session for RedisSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connector::target::TlsFiles;
+
+    /// Starts a server that reads the probe and then sends `answer`, or closes the
+    /// connection without an answer.
+    async fn fake_server(answer: Option<&'static [u8]>) -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut probe = [0; 6];
+            stream.read_exact(&mut probe).await.unwrap();
+            assert_eq!(&probe, b"PING\r\n");
+            if let Some(answer) = answer {
+                stream.write_all(answer).await.unwrap();
+            }
+        });
+        port
+    }
+
+    fn probe_answer(answer: Option<&'static [u8]>, tls_mode: &Tls) -> Result<(), ConnectError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let port = fake_server(answer).await;
+            probe("127.0.0.1", port, tls_mode).await
+        })
+    }
+
+    #[test]
+    fn a_resp_answer_to_the_probe_is_a_server_without_tls() {
+        let verify = Tls::Verify(TlsFiles::default());
+        for answer in [&b"-NOAUTH Authentication required.\r\n"[..], b"+PONG\r\n"] {
+            let error = probe_answer(Some(answer), &verify).unwrap_err();
+            assert_eq!(error.tls_refused, Some(TlsRefusal::ServerHasNoTls));
+            assert!(probe_answer(Some(answer), &Tls::Disabled).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_closed_connection_or_a_tls_alert_is_a_server_that_needs_tls() {
+        let verify = Tls::Verify(TlsFiles::default());
+        for answer in [None, Some(&[0x15_u8, 0x03, 0x03][..])] {
+            let error = probe_answer(answer, &Tls::Disabled).unwrap_err();
+            assert_eq!(error.tls_refused, Some(TlsRefusal::ServerNeedsTls));
+            assert!(probe_answer(answer, &verify).is_ok());
+        }
+    }
 
     #[test]
     fn library_errors_give_their_kind() {

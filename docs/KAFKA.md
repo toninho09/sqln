@@ -44,6 +44,8 @@ kafka://localhost:9092?group=reads-billing
 
 - `kafkas` verifies the server certificate with the system roots. Add `ca=<file>` for a private CA.
 - `registry=<url>` points to the Schema Registry. The form has the same field, with an optional user.
+- `registry_user=<user>` or `--registry-user <user>` sets the user of the registry on the command line. SQLN asks for its password on the terminal.
+- `max_scan=<n>` or `--max-scan <n>` sets the max scan of a command-line connection. `--execute` refuses it, because a batch read reads all messages.
 - `group=<id>` sets the `group.id` that reads report to the cluster. Without it, reads use `sqln-read`. SQLN never joins the group and never commits.
 - `topics=<patterns>` limits the topics of the catalog. The form has the same **Topics** field, and `config.json` has `topics`.
 
@@ -109,6 +111,8 @@ SELECT * FROM orders LIMIT 100;
 
 SELECT * FROM orders WHERE value.status = 'failed' LIMIT 100 SCAN 50000;
 ```
+
+A read without its own `SCAN` gets `SCAN 100000` at its end, also with `LIMIT` or a start, because `LIMIT` counts only the matches and a start does not end the read. **Kafka max scan** in Settings (`maxScan`) changes the number, and the **Max scan** field of a connection replaces it for that connection. Messages shows the added `SCAN`, and the editor text stays the same. An export and `sqln --execute` read all messages, as they also skip the row cap. Write your own `SCAN` to read more.
 
 ## Watch new messages as they arrive
 
@@ -566,7 +570,8 @@ The AI completion works in a Kafka console, as in a SQL console. See [AI complet
 - Each request sends a compact syntax guide of this language, so the model writes SQLN Kafka and not standard SQL.
 - A request sends the topic of the statement at the cursor, with its Schema Registry fields. Without a topic, it sends the topic names that start with the typed text first.
 
-An MCP agent gets the same guide in `syntax.Kafka` of `get_context`. It reads the fields of a topic with `describe`, and it runs finite reads without full access. `TAIL` and `EMIT CHANGES` do not run through MCP. See [MCP](MCP.md).
+An MCP agent gets the same guide in `syntax.Kafka` of its first `get_context`. It reads the fields of a topic with `describe`, and it runs finite reads without full access. `TAIL` and `EMIT CHANGES` do not run through MCP.
+An agent read follows the **Max scan** rule of [Read a finite number of messages](#read-a-finite-number-of-messages), and each result tells the agent how its read ended. See [MCP](MCP.md).
 
 ## Common recipes
 
@@ -628,7 +633,7 @@ SELECT * FROM orders WHERE value IS NULL LIMIT 50;
 
 - A plain `SELECT` starts at `EARLIEST` and stops at the last message. `EMIT CHANGES` starts at `LATEST` and waits until **Stop**.
 - `EMIT CHANGES` accepts neither `LIMIT` nor `SCAN`.
-- `LIMIT` caps matching rows. `SCAN` caps examined messages.
+- `LIMIT` caps matching rows. `SCAN` caps examined messages. A read without `SCAN` gets **Kafka max scan**, 100000 by default.
 - The summary line shows the scanned messages, the speed, and the size while a read runs.
 - A final `SELECT` can omit `;`. End a statement with `;` before another one.
 - Start a line with `#` for a comment.

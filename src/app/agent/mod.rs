@@ -317,6 +317,8 @@ struct Session {
     alive: CancellationToken,
     requested: Instant,
     level: Level,
+    /// True after `get_context` sent the Kafka guide to this session.
+    kafka_guide_sent: bool,
 }
 
 /// What an authorized session can do. Each level includes the previous levels.
@@ -356,6 +358,8 @@ struct Job {
     session: String,
     state: &'static str,
     message: Option<String>,
+    /// The configuration that can correct the failure of `message`.
+    fix: Option<crate::connector::Fix>,
     cancel: CancellationToken,
     consoles: Vec<ConsoleId>,
     connections: Vec<(ConnectionId, u64)>,
@@ -367,6 +371,10 @@ struct Job {
     results: Vec<Value>,
     /// The end of each executed statement, for the reply.
     statements: Vec<Value>,
+    /// The notices of the statement that runs, until its end takes them.
+    notices: Vec<String>,
+    /// The `SCAN` that SQLN added to a read that had none.
+    default_scan: Option<u64>,
     /// The rows of each result in the reply.
     rows: usize,
     serial: u64,
@@ -391,7 +399,8 @@ enum Output {
     Ddl(crate::definition::Target, String, crate::sql::Dialect),
     Diagram(ConsoleId),
     Compare(ConsoleId),
-    Catalog(ConnectionId, u64),
+    /// The catalog of a connection, with the schema that the agent asked for.
+    Catalog(ConnectionId, u64, Option<String>),
     /// The field paths of a Kafka topic.
     Fields(String),
 }
@@ -411,8 +420,9 @@ struct Proposal {
     _hold: Option<agent::Hold>,
 }
 enum Work {
-    /// Holds the split statements when the draft held one raw text.
-    Validated(String, Result<Option<Vec<String>>, Error>),
+    /// Holds the statements when the draft held one raw text, or when SQLN added a bound
+    /// to a read, and the `SCAN` of an added bound.
+    Validated(String, Result<(Option<Vec<String>>, Option<u64>), Error>),
     Diff(
         String,
         Result<(Vec<crate::editor::review::Hunk>, agent::Hold), Error>,
@@ -794,17 +804,36 @@ impl App {
                 artifact = agent::text_page(&text.value, artifact_offset)?;
             }
         }
-        Ok(json!({
+        // A read that matched nothing before its SCAN ended says nothing about the rest
+        // of the topic.
+        let scan_ended_empty = job.results.iter().any(|reference| {
+            self.agent_grid(
+                reference["tab_id"].as_str().unwrap_or_default(),
+                reference["result"].as_u64().unwrap_or_default() as usize,
+            )
+            .ok()
+            .and_then(|grid| grid.read)
+            .is_some_and(|read| read.end == crate::exec::ReadEnd::Scan && read.matched == 0)
+        });
+        let mut reply = json!({
             "job_id": id,
             "kind": task_kind(&job.output),
             "status": job.state,
             "message": job.message,
             "tab_ids": job.consoles.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "statements": job.statements,
+            "default_scan": job.default_scan,
             "results": results,
             "artifact": artifact,
             "artifact_format": if matches!(job.output, Output::Catalog(..) | Output::Diagram(_) | Output::Fields(_)) { "json" } else { "text" },
-        }))
+        });
+        if scan_ended_empty {
+            reply["next_action"] = json!(crate::ui::text::AGENT_KAFKA_SCAN_EMPTY);
+        }
+        if let Some(fix) = job.fix {
+            reply["fix"] = json!(fix.hint());
+        }
+        Ok(reply)
     }
 
     fn end_agent_session(&mut self, session: &str, state: &'static str) {

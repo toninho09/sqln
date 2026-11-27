@@ -46,6 +46,11 @@ pub fn more_notices(count: usize) -> String {
 pub fn limit_added(rows: usize) -> String {
     format!("SQLN added LIMIT {rows} to this statement.")
 }
+pub fn scan_added(scan: u64) -> String {
+    format!(
+        "SQLN added SCAN {scan} to this read, because it had no SCAN. Write your own SCAN to read more messages."
+    )
+}
 pub const SECTION_COLUMNS: &str = "Columns";
 pub const SECTION_INDEXES: &str = "Indexes";
 pub const SECTION_FOREIGN_KEYS: &str = "Foreign keys";

@@ -28,6 +28,7 @@ pub const FORM_URI_KIND: &str = "The connection text is for another database typ
 pub const FORM_POOL_ZERO: &str = "The pool limit must be 1 or more.";
 pub const FORM_CLIENT_PAIR: &str = "A client certificate needs its file and its key.";
 pub const FORM_TLS_FILES: &str = "TLS files need a connection with TLS.";
+pub const FORM_TLS_FILES_AUTO: &str = "TLS files need the value \"Verify the certificate\".";
 pub const FORM_CONNECTED: &str =
     "This connection is connected. Disconnect it to change access, TLS, or the pool.";
 pub const FIELD_KIND: &str = "Type";
@@ -122,12 +123,15 @@ pub const VALUE_MYSQL: &str = "MySQL";
 pub const VALUE_REDIS: &str = "Redis/Valkey";
 pub const VALUE_KAFKA: &str = "Kafka";
 pub const VALUE_DATABRICKS: &str = "Databricks";
+pub const VALUE_CLICKHOUSE: &str = "ClickHouse";
+pub const VALUE_LIBSQL: &str = "libSQL/Turso";
 pub const VALUE_SQLITE: &str = "SQLite";
 pub const VALUE_DUCKDB: &str = "DuckDB";
 pub const VALUE_SCOPE_PROJECT: &str = "Project";
 pub const VALUE_SCOPE_GLOBAL: &str = "Global";
 pub const VALUE_FIELDS: &str = "Fields";
 pub const VALUE_URI: &str = "URI";
+pub const VALUE_TLS_AUTO: &str = "Automatic";
 pub const VALUE_TLS_VERIFY: &str = "Verify the certificate";
 pub const VALUE_TLS_OFF: &str = "Off";
 pub const VALUE_DEFAULT: &str = "Default";
@@ -203,3 +207,55 @@ pub const VALUE_JSON_ORIGINAL: &str = "JSON, original";
 pub const VALUE_NUMBER: &str = "number";
 pub const VALUE_BINARY: &str = "binary";
 pub const VALUE_NULL: &str = "NULL";
+
+pub const CONNECT_LIMIT_ENDED: &str = "The connection time limit ended.";
+
+/// The line that tells the user which configuration can correct a failure.
+pub fn fix_hint(fix: crate::failure::Fix) -> String {
+    use crate::failure::Fix;
+    let advice = match fix {
+        Fix::TlsOff => format!(
+            "the server has no TLS. In the connection, set {FIELD_TLS} to {VALUE_TLS_AUTO} or {VALUE_TLS_OFF}."
+        ),
+        Fix::TlsOn => format!(
+            "the server needs TLS. In the connection, set {FIELD_TLS} to {VALUE_TLS_AUTO} or \"{VALUE_TLS_VERIFY}\"."
+        ),
+        Fix::CertificateIssuer => format!(
+            "SQLN does not trust the authority of the server certificate. Set {FIELD_CA} to the certificate of that authority."
+        ),
+        Fix::CertificateName => format!(
+            "the server certificate is for another name. Set {FIELD_HOST} to a name of the certificate."
+        ),
+        Fix::CertificateDate => "the server certificate is expired or not valid yet. Ask the administrator of the server for a new certificate, or check the clock of this computer.".to_owned(),
+        Fix::Database => format!("the database does not exist. Change {FIELD_DATABASE}."),
+        Fix::Host => format!("SQLN cannot find or reach this host. Change {FIELD_HOST}, or check the network."),
+        Fix::Port => format!(
+            "nothing accepts connections at this port. Change {FIELD_PORT}, or start the server."
+        ),
+        Fix::Socket => format!("the socket file does not exist. Change {FIELD_HOST}, or start the server."),
+        Fix::File => format!("SQLN cannot open the file. Change {FIELD_FILE}, or check its permissions."),
+        Fix::ServerRule => format!(
+            "a rule of the server refuses this user, host, or TLS mode, such as pg_hba.conf. Change {FIELD_USER} or {FIELD_TLS}, or ask the administrator of the server."
+        ),
+        Fix::PoolLimit => format!(
+            "the server has no free connection. Lower {FIELD_POOL} in the connection, or close other clients."
+        ),
+        Fix::ConnectLimit => format!(
+            "check {FIELD_HOST} and {FIELD_PORT}, or increase {FIELD_CONNECT} in the connection."
+        ),
+        Fix::ReadOnly => format!(
+            "this connection is read only. Turn off {FIELD_READ_ONLY} in the connection to write."
+        ),
+        Fix::ServerReadOnly => "the server, the file, or the transaction is read only. Connect to a server that accepts writes, or end the read-only transaction.".to_owned(),
+        Fix::Privilege => format!(
+            "the user of this connection lacks the privilege. Change {FIELD_USER}, or ask the administrator for the privilege."
+        ),
+        Fix::SqlTimeout => format!(
+            "increase \"{FIELD_SQL_TIMEOUT}\" in the connection, or make the statement faster."
+        ),
+        Fix::LockLimit => format!(
+            "another process holds the lock of the file. Increase {FIELD_BUSY} in the connection, or close the other process."
+        ),
+    };
+    format!("Hint: {advice}")
+}

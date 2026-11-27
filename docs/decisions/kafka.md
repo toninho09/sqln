@@ -232,6 +232,19 @@ Implementation decisions:
 | Format | `consumerGroup` is optional and `version` stays 1. A file with the field cannot load in an earlier SQLN, because entries refuse unknown fields | Same rule as `sasl` and `schemaRegistry` |
 | `GROUP <id>` | Still reads the offsets of `<id>`, not the setting | The command names its group |
 
+## Max scan of Kafka reads — 2026-11-27
+
+The user asks that each Kafka read without its own `SCAN` gets one, also with `LIMIT` or a start, for the console reads and the agent reads. Settings hold the default, and a connection can replace it. This entry changes point 4 of "MCP context, Kafka bounds, and IPC 3" in [ai-mcp-agent.md](ai-mcp-agent.md).
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Rule | A read with its own `SCAN` keeps it, also above the default. A read without `SCAN` gets `SCAN <max scan>` | A hard maximum that lowers an explicit `SCAN` | User choice |
+| Places | **Kafka max scan** in Settings (`maxScan` of the preferences, Global and Project), and the **Max scan** field of the Kafka form (`maxScan` of the connection). The connection value wins. On the command line, `--max-scan` and `max_scan=` of the connection text (changed by [Connection options on the command line](execution.md#connection-options-on-the-command-line--2026-11-27)) | Only the connection | User choice |
+| Value | Empty means 100000. A value must be a number greater than 0 | — | `SCAN 0` reads nothing |
+| Console reads | The editor text stays the same. Messages shows `SQLN added SCAN N to this read`, as it shows an added `LIMIT` | No message | User choice. The result also shows that the read ended at its scan |
+| Export and batch | An export and `sqln --execute` read all messages | The same `SCAN` | They also skip the row cap, and they read everything on purpose |
+| Format | Both `maxScan` keys are optional and `version` stays 1. A file with them cannot load in an earlier SQLN, because entries refuse unknown fields | — | Same rule as `consumerGroup` |
+
 ## Kafka array operators — 2026-11-11
 
 The user asks for array operators in the Kafka filter and SELECT, and approves the points below.

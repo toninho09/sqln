@@ -22,7 +22,8 @@ use sqln::compare::sql::{compare_sql, rows_sql, table_columns_sql};
 use sqln::connection::{Definition, Source};
 use sqln::connector::target::parse_uri;
 use sqln::connector::{
-    Connector, ErrorKind, Session, TransactionCommand, TransactionState, network_connector,
+    ConnectError, Connector, ErrorKind, Fix, Session, TlsRefusal, TransactionCommand,
+    TransactionState, network_connector,
 };
 use sqln::definition::{Target as DdlTarget, definition_sql, definition_text};
 use sqln::diagram::mermaid::to_mermaid;
@@ -135,6 +136,7 @@ struct Harness {
 #[derive(Debug, Default)]
 struct Run {
     columns: Vec<Vec<String>>,
+    types: Vec<Vec<Option<String>>>,
     rows: Vec<Row>,
     bytes: usize,
     statuses: Vec<StatementStatus>,
@@ -200,7 +202,10 @@ impl Harness {
                     event: sqln::command_log::LogEvent::Started { text, .. },
                     ..
                 } => run.commands.push(text),
-                ExecEvent::Columns { columns, .. } => run.columns.push(columns),
+                ExecEvent::Columns { columns, types, .. } => {
+                    run.columns.push(columns);
+                    run.types.push(types);
+                }
                 ExecEvent::Rows { rows, bytes, .. } => {
                     run.rows.extend(rows);
                     run.bytes += bytes;
@@ -2095,15 +2100,17 @@ fn tls_verifies_the_certificate_and_the_name() {
             "{scheme}://{user}:spike@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}",
             other.display()
         );
-        let error = try_connect(&wrong_ca).err().unwrap();
-        println!("{scheme}, wrong CA: {error}");
+        let error = connect_error(&wrong_ca);
+        println!("{scheme}, wrong CA: {}", error.message);
+        assert_certificate_fix(&error, scheme);
 
         let wrong_name = format!(
             "{scheme}://{user}:spike@127.0.0.1:{port}/spike?sslmode=verify-full&sslrootcert={}",
             ca.display()
         );
-        let error = try_connect(&wrong_name).err().unwrap();
-        println!("{scheme}, wrong name: {error}");
+        let error = connect_error(&wrong_name);
+        println!("{scheme}, wrong name: {}", error.message);
+        assert_eq!(error.fix, Some(Fix::CertificateName), "{scheme}: {error:?}");
     }
 }
 
@@ -2117,12 +2124,117 @@ fn tls_refuses_a_server_without_tls() {
             Kind::MySql => ("mysql", 33069, "root"),
         };
         let uri = format!(
-            "{scheme}://{user}:spike@localhost:{port}/spike?sslmode=verify-full&sslrootcert={}",
+            "{scheme}://{user}:spike@127.0.0.1:{port}/spike?sslmode=verify-full&sslrootcert={}",
             ca.display()
         );
-        let error = try_connect(&uri).err().unwrap();
-        println!("{scheme}, server without TLS: {error}");
+        let error = connect_error(&uri);
+        println!("{scheme}, server without TLS: {}", error.message);
+        // The MySQL image makes its own certificate, so it has TLS and the error is a
+        // certificate error.
+        let expected = match server.kind {
+            Kind::Postgres => Some(TlsRefusal::ServerHasNoTls),
+            Kind::MySql => None,
+        };
+        assert_eq!(error.tls_refused, expected, "{scheme}: {error:?}");
+        // The explicit TLS mode asks for the other mode, or for the CA of the server.
+        let fix = match server.kind {
+            Kind::Postgres => Some(Fix::TlsOff),
+            Kind::MySql => Some(Fix::CertificateIssuer),
+        };
+        assert_eq!(error.fix, fix, "{scheme}: {error:?}");
     }
+}
+
+#[test]
+fn a_connection_failure_names_the_field_to_change() {
+    for server in servers() {
+        let (scheme, port, user) = match server.kind {
+            Kind::Postgres => ("postgres", 54329, "postgres"),
+            Kind::MySql => ("mysql", 33069, "root"),
+        };
+        let absent = format!("{scheme}://{user}:spike@127.0.0.1:{port}/absent_database");
+        let error = connect_error(&absent);
+        assert_eq!(error.fix, Some(Fix::Database), "{scheme}: {error:?}");
+        // Nothing listens on port 1.
+        let closed = format!("{scheme}://{user}:spike@127.0.0.1:1/spike");
+        let error = connect_error(&closed);
+        assert_eq!(error.fix, Some(Fix::Port), "{scheme}: {error:?}");
+    }
+}
+
+/// `localhost` has two addresses. A driver can report the refusal of `::1` and hide the
+/// certificate error of `127.0.0.1`: then no hint is right, but a port hint is wrong.
+fn assert_certificate_fix(error: &ConnectError, scheme: &str) {
+    assert!(
+        matches!(error.fix, Some(Fix::CertificateIssuer) | None),
+        "{scheme}: {error:?}"
+    );
+    if !error.message.contains("refused") {
+        assert_eq!(
+            error.fix,
+            Some(Fix::CertificateIssuer),
+            "{scheme}: {error:?}"
+        );
+    }
+}
+
+fn connect_error(uri: &str) -> ConnectError {
+    let connector = network_connector(parse_uri(uri).unwrap());
+    match runtime().block_on(connector.connect()) {
+        Ok(_) => panic!("the connection worked"),
+        Err(error) => error,
+    }
+}
+
+#[test]
+fn a_certificate_error_is_not_a_server_without_tls() {
+    let Some(_) = certs() else {
+        println!("skipped: SQLN_TEST_TLS is not set");
+        return;
+    };
+    for server in tls_servers() {
+        // The system roots do not know the test CA.
+        let uri = format!(
+            "{}://{}:spike@localhost:{}/spike?sslmode=verify-full",
+            server.scheme,
+            user_of(&server),
+            server.port
+        );
+        let error = connect_error(&uri);
+        assert_eq!(error.tls_refused, None, "{}: {error:?}", server.scheme);
+        assert_certificate_fix(&error, server.scheme);
+    }
+}
+
+#[test]
+fn a_postgres_rule_that_needs_tls_refuses_a_plain_attempt() {
+    let Some(_) = certs() else {
+        println!("skipped: SQLN_TEST_TLS is not set");
+        return;
+    };
+    let Some(server) = tls_servers().into_iter().find(|s| s.scheme == "postgres") else {
+        return;
+    };
+    // `pg_hba.conf` rejects `certuser` without TLS.
+    let plain = format!(
+        "postgres://certuser@localhost:{}/spike?sslmode=disable",
+        server.port
+    );
+    let error = connect_error(&plain);
+    assert_eq!(
+        error.tls_refused,
+        Some(TlsRefusal::ServerNeedsTls),
+        "{error:?}"
+    );
+    // `28000` is a rule of the server: the hint names the user and the TLS mode.
+    assert_eq!(error.fix, Some(Fix::ServerRule), "{error:?}");
+
+    // Without a choice, the local address tries with TLS after the refusal. The test CA
+    // is not in the system roots, so the second attempt fails and both causes stay.
+    let auto = format!("postgres://certuser@localhost:{}/spike", server.port);
+    let error = connect_error(&auto);
+    assert!(error.message.starts_with("Without TLS: "), "{error:?}");
+    assert!(error.message.contains(". With TLS: "), "{error:?}");
 }
 
 /// The text of a connection of `certuser`. A full path in `key` replaces the folder.
@@ -4668,4 +4780,36 @@ fn the_palette_offers_the_schema_command_of_a_namespace_source() {
     let screen = s.screen();
     assert!(screen.contains("Choose the schema or database"), "{screen}");
     s.code(KeyCode::Esc);
+}
+
+#[test]
+fn results_carry_the_column_types_of_the_database() {
+    for server in servers() {
+        let mut h = Harness::open(&server, Settings::default());
+        let run = h.run_ok(&["SELECT CAST(1 AS DECIMAL(5,2)) AS amount, 'a' AS label"]);
+        let types = &run.types[0];
+        assert_eq!(types.len(), 2, "{run:?}");
+        let (amount, label) = (types[0].as_deref(), types[1].as_deref());
+        match server.kind {
+            Kind::Postgres => {
+                assert_eq!(amount, Some("numeric"));
+                assert_eq!(label, Some("text"));
+            }
+            Kind::MySql => {
+                assert_eq!(amount, Some("decimal"));
+                assert_eq!(label, Some("varchar"));
+                // The server sends ENUM and SET as text columns with a flag.
+                h.run_ok(&[
+                    "DROP TABLE IF EXISTS t_enum_types",
+                    "CREATE TABLE t_enum_types (s ENUM('new', 'paid'), f SET('a', 'b'))",
+                    "INSERT INTO t_enum_types VALUES ('new', 'a,b')",
+                ]);
+                let run = h.run_ok(&["SELECT s, f FROM t_enum_types"]);
+                let types = &run.types[0];
+                assert_eq!(types[0].as_deref(), Some("enum"), "{run:?}");
+                assert_eq!(types[1].as_deref(), Some("set"), "{run:?}");
+                h.run_ok(&["DROP TABLE t_enum_types"]);
+            }
+        }
+    }
 }

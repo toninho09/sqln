@@ -11,8 +11,16 @@ pub const KAFKA_EVAL_STOPPED: &str =
     "The Kafka expression stops because the execution is canceled.";
 pub const KAFKA_BAD_GROUP: &str =
     "The consumer group cannot hold a space or a control character. Remove them.";
-pub const AGENT_KAFKA_DESCRIBE: &str = "A Kafka describe reads the fields of one topic. Send schema \"topics\" and an object with the topic name and the kind table, or send no object to read the catalog.";
-pub const AGENT_KAFKA_NO_FIELDS: &str = "This topic has no fields: the connection has no Schema Registry, or the registry has no subject <topic>-value or <topic>-key. Read some messages with SELECT ... LIMIT to see the values.";
+pub const AGENT_KAFKA_DESCRIBE: &str = "A Kafka describe reads the fields of one topic. Send an object with the topic name and the kind topic, or send no object to read the catalog.";
+pub const AGENT_KAFKA_NO_FIELDS: &str = "This topic has no fields: the connection has no Schema Registry, or the registry has no subject <topic>-value or <topic>-key. Read a few messages, such as SELECT * FROM <topic> LIMIT 5, to see the paths of key and value. Do not guess paths.";
+pub const AGENT_KAFKA_SCAN_EMPTY: &str = "The read reached its SCAN before any message matched. The rest of the topic was not read: raise SCAN, or start nearer the messages with START AT or a time condition.";
+/// The note of an agent read that SQLN bounded.
+pub fn agent_default_scan(scan: u64) -> String {
+    format!(
+        "SQLN added SCAN {scan} to the agent read, because it had no SCAN. LIMIT counts only the matches, and START AT does not end the read."
+    )
+}
+pub const AGENT_KAFKA_GUIDE_SENT: &str = "The Kafka guide was in an earlier get_context reply of this session. Call get_context with include_syntax to read it again.";
 pub const KAFKA_BAD_TOPICS: &str = "Separate the topic patterns with commas, such as orders.*, !*.dlq. A pattern cannot hold a space or a control character, and ! needs a pattern.";
 pub const FORM_REGISTRY_URL: &str =
     "The registry URL must start with http:// or https://. A registry user needs a URL.";
@@ -209,6 +217,9 @@ pub fn kafka_read_end(progress: &ProgressSnapshot) -> String {
 pub const FIELD_SASL: &str = "SASL";
 pub const FIELD_CONSUMER_GROUP: &str = "Consumer group";
 pub const FIELD_TOPICS: &str = "Topics";
+pub const FIELD_MAX_SCAN: &str = "Max scan";
+pub const KAFKA_BAD_MAX_SCAN: &str =
+    "Enter a number of messages greater than 0, or leave it empty to use Max scan of the settings.";
 pub const FIELD_REGISTRY_URL: &str = "Registry URL";
 pub const FIELD_REGISTRY_USER: &str = "Registry user";
 pub const FIELD_REGISTRY_PASSWORD: &str = "Registry password";

@@ -405,6 +405,33 @@ fn parse_read(cursor: &mut Cursor<'_>, tail: bool, select: bool) -> Result<Read,
     Ok(read)
 }
 
+/// The most messages that a read without its own `SCAN` examines, when the settings and
+/// the connection set no other number.
+pub const DEFAULT_SCAN: u64 = 100_000;
+
+/// Returns the read with `SCAN scan` at its end when it has no `SCAN`, so it cannot
+/// examine the whole topic. `LIMIT` counts only the matches, and a start does not end
+/// the read, so they get the `SCAN` too. Other statements, a continuous read, and a read
+/// with its own `SCAN` return `None`. The result always parses again.
+pub fn bounded_read(line: &str, scan: u64) -> Option<String> {
+    let Ok(Command::Consume(read)) = parse(line) else {
+        return None;
+    };
+    if read.scan.is_some() {
+        return None;
+    }
+    let body = line.trim_end();
+    let body = body.strip_suffix(';').unwrap_or(body).trim_end();
+    // A command stays on one line. A SELECT can end with a `#` comment line, which a
+    // clause on the same line would join.
+    [
+        format!("{body} SCAN {scan}"),
+        format!("{body}\nSCAN {scan}"),
+    ]
+    .into_iter()
+    .find(|bounded| matches!(parse(bounded), Ok(Command::Consume(read)) if read.scan == Some(scan)))
+}
+
 /// Reads a SELECT statement or one command line.
 pub fn parse(line: &str) -> Result<Command, ExecError> {
     let select = crate::sql::first_keyword(line, crate::sql::Dialect::Kafka)
@@ -473,6 +500,49 @@ mod tests {
                 assert_eq!(last.text, value, "{literal} in select: {select}");
             }
         }
+    }
+
+    #[test]
+    fn an_agent_read_without_a_bound_gets_a_scan() {
+        for (line, bounded) in [
+            ("SELECT * FROM orders", "SELECT * FROM orders SCAN 7"),
+            ("SELECT * FROM orders;", "SELECT * FROM orders SCAN 7"),
+            (
+                "SELECT key FROM orders WHERE key = 'a'  ",
+                "SELECT key FROM orders WHERE key = 'a' SCAN 7",
+            ),
+            (
+                "CONSUME orders WHERE key = 'a'",
+                "CONSUME orders WHERE key = 'a' SCAN 7",
+            ),
+            // LIMIT counts only the matches, and a start does not end the read.
+            (
+                "SELECT * FROM orders LIMIT 5",
+                "SELECT * FROM orders LIMIT 5 SCAN 7",
+            ),
+            (
+                "SELECT * FROM orders START AT EARLIEST",
+                "SELECT * FROM orders START AT EARLIEST SCAN 7",
+            ),
+            (
+                "CONSUME orders FROM latest",
+                "CONSUME orders FROM latest SCAN 7",
+            ),
+        ] {
+            assert_eq!(bounded_read(line, 7).as_deref(), Some(bounded), "{line}");
+        }
+        for line in [
+            "SELECT * FROM orders SCAN 50",
+            "SELECT * FROM orders EMIT CHANGES",
+            "TAIL orders",
+            "TOPICS",
+            "SELECT FROM",
+        ] {
+            assert_eq!(bounded_read(line, 7), None, "{line}");
+        }
+        // A last comment line keeps the clause out of the comment.
+        let commented = bounded_read("SELECT *\nFROM orders\n# all of it", 7).unwrap();
+        assert!(matches!(parse(&commented), Ok(Command::Consume(read)) if read.scan == Some(7)));
     }
 
     fn consume(line: &str) -> Read {

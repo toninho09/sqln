@@ -36,6 +36,58 @@ services:
       timeout: 3s
       retries: 120
 
+  # PostgreSQL protocol. One node, no TLS, and the data in memory.
+  cockroach:
+    image: cockroachdb/cockroach:latest-v26.4
+    command: ["start-single-node", "--insecure", "--store=type=mem,size=1GiB"]
+    ports:
+      - "127.0.0.1:26259:26257"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf 'http://127.0.0.1:8080/health?ready=1'"]
+      interval: 1s
+      timeout: 3s
+      retries: 120
+
+  # MySQL protocol. The standalone server keeps its data in a local store.
+  tidb:
+    image: pingcap/tidb:v8.5.4
+    ports:
+      - "127.0.0.1:40009:4000"
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:10080/status"]
+      interval: 1s
+      timeout: 3s
+      retries: 120
+
+  # HTTP interface. The image makes the user of the environment.
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_USER: sqln
+      CLICKHOUSE_PASSWORD: spike
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:18123:8123"
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user sqln --password spike -q 'SELECT 1'"]
+      interval: 1s
+      timeout: 3s
+      retries: 120
+
+  # Hrana over HTTP, without authentication. The image has no curl, so bash opens the
+  # port.
+  libsql:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 1s
+      timeout: 3s
+      retries: 120
+
   redis:
     image: redis:8
     command: ["redis-server", "--requirepass", "spike", "--save", "", "--appendonly", "no"]
