@@ -22,6 +22,11 @@ impl App {
     }
 
     pub(super) fn open_keys(&mut self) {
+        self.modals.help = Some(self.help());
+    }
+
+    /// Returns the help of the current context: the guide and the key groups.
+    pub(super) fn help(&self) -> Help {
         let in_table = self.table_index().is_some() || self.compare_index().is_some();
         // The explorer is the only panel of the home screen.
         let panel = if self.navigator_focused || self.home() {
@@ -86,11 +91,7 @@ impl App {
         } else {
             text::MODE_CONVENTIONAL
         };
-        self.modals.help = Some(Help::new(
-            text::keys_title(mode, name),
-            self.guide_topics(),
-            groups,
-        ));
+        Help::new(text::keys_title(mode, name), self.guide_topics(), groups)
     }
 
     /// Returns the guide with the effective key of each step.

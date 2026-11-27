@@ -1,4 +1,4 @@
-//! The command palette: the actions of the application, with a filter.
+//! The command palette: the actions of the application and the help pages, with a filter.
 
 use crossterm::event::KeyEvent;
 
@@ -7,12 +7,22 @@ use crate::input::Action;
 use crate::line_input::LineInput;
 use crate::ui::text;
 
+/// What a row of the palette opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    Action(Action),
+    /// A page of the help, as an index of its sidebar.
+    Help(usize),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Command {
-    pub action: Action,
+    pub target: Target,
     pub label: String,
     /// The key of the action. An action without a key stays in the list.
     pub key: Option<String>,
+    /// More words for the filter, which the list does not show.
+    pub words: String,
 }
 
 /// What a key asks from the application.
@@ -21,6 +31,8 @@ pub enum PaletteRequest {
     None,
     Cancel,
     Run(Action),
+    /// Opens the help on a page.
+    Help(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -28,15 +40,26 @@ pub struct Palette {
     list: FilterList<Command>,
 }
 
-/// A word of the filter can be in the label or in the key.
+/// A word of the filter can be in the label, in the key, or in the other words.
 fn filter_text(command: &Command) -> String {
     format!(
-        "{} {} {} {}",
+        "{} {} {}",
         command.label,
         command.key.as_deref().unwrap_or(""),
-        command.action.name(),
-        text::command_aliases(command.action)
+        command.words
     )
+}
+
+impl Command {
+    /// Returns the row of an action. The filter also finds its name and aliases.
+    pub fn action(action: Action, label: String, key: Option<String>) -> Self {
+        Self {
+            target: Target::Action(action),
+            label,
+            key,
+            words: format!("{} {}", action.name(), text::command_aliases(action)),
+        }
+    }
 }
 
 impl Palette {
@@ -74,7 +97,10 @@ impl Palette {
     /// Returns the request for a row of the list.
     pub fn choose(&mut self, index: usize) -> PaletteRequest {
         match self.list.row(index) {
-            Some(command) => PaletteRequest::Run(command.action),
+            Some(command) => match command.target {
+                Target::Action(action) => PaletteRequest::Run(action),
+                Target::Help(page) => PaletteRequest::Help(page),
+            },
             None => PaletteRequest::None,
         }
     }

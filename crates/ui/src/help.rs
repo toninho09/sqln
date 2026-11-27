@@ -67,8 +67,12 @@ impl Help {
     }
 
     pub fn view(&self) -> View {
+        self.view_of(self.page)
+    }
+
+    fn view_of(&self, page: usize) -> View {
         let topics = self.guide.len();
-        match self.page {
+        match page {
             page if page < topics => View::Topic(page),
             page if page == topics => View::All,
             page => View::Group(page - topics - 1),
@@ -111,7 +115,12 @@ impl Help {
 
     /// Returns the text of the visible page for the clipboard.
     pub fn text(&self) -> String {
-        match self.view() {
+        self.page_text(self.page)
+    }
+
+    /// Returns the text of a page, without the filter.
+    pub fn page_text(&self, page: usize) -> String {
+        match self.view_of(page) {
             View::Topic(index) => {
                 let topic = &self.guide[index];
                 let examples = topic

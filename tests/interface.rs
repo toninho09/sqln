@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::common::{ctrl, key, shift, temp_db, temp_dir};
+use crate::common::{ctrl, key, palette_offers_command, shift, temp_db, temp_dir};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -1331,7 +1331,7 @@ fn the_palette_shows_only_commands_that_have_an_effect() {
     let mut screen = Screen::new("palette-state", Theme::plain(), KeyboardMode::Conventional);
     screen.palette();
     screen.write("rollback");
-    assert!(screen.screen(100, 30).contains("No command matches"));
+    assert!(!palette_offers_command(&screen.screen(100, 30)));
     screen.code(KeyCode::Esc);
 
     screen.write("BEGIN;");
@@ -1340,7 +1340,7 @@ fn the_palette_shows_only_commands_that_have_an_effect() {
     screen.pump_until("Transaction open · Idle");
     screen.palette();
     screen.write("rollback");
-    assert!(!screen.screen(100, 30).contains("No command matches"));
+    assert!(palette_offers_command(&screen.screen(100, 30)));
     screen.code(KeyCode::Enter);
     screen.pump_until("No transaction");
 }
@@ -1360,7 +1360,7 @@ fn the_palette_hides_the_console_commands_in_a_table() {
     screen.pump_until("users (table)");
     screen.palette();
     screen.write("run the");
-    assert!(screen.screen(100, 30).contains("No command matches"));
+    assert!(!palette_offers_command(&screen.screen(100, 30)));
 }
 
 #[test]

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::common::{ctrl, key, shift};
+use crate::common::{ctrl, key, palette_offers_command, shift};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -354,7 +354,7 @@ impl Screen {
 
     fn choose(&mut self, query: &str) {
         let screen = self.palette(query);
-        assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
+        assert!(palette_offers_command(&screen), "{screen}");
         self.code(KeyCode::Enter);
     }
 }
@@ -524,7 +524,7 @@ impl States {
         self.app.on_event(Event::Paste(action.name().to_owned()));
         let screen = self.draw();
         self.code(KeyCode::Esc);
-        screen.contains(text::TITLE_PALETTE) && !screen.contains(text::NO_COMMANDS)
+        palette_offers_command(&screen)
     }
 
     /// Drops the commands that this state offers from the list of the missing ones.
@@ -792,12 +792,12 @@ fn explorer_row_commands_stay_out_of_the_editor_palette() {
         "generate ddl",
     ] {
         let screen = s.palette(query);
-        assert!(screen.contains(text::NO_COMMANDS), "{query}: {screen}");
+        assert!(!palette_offers_command(&screen), "{query}: {screen}");
         s.code(KeyCode::Esc);
     }
     for query in ["add connection", "scripts without"] {
         let screen = s.palette(query);
-        assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
+        assert!(palette_offers_command(&screen), "{screen}");
         s.code(KeyCode::Esc);
     }
     s.prefix('h');
@@ -809,7 +809,7 @@ fn explorer_row_commands_stay_out_of_the_editor_palette() {
         .name(s.app.connections())
         .to_owned();
     let screen = s.palette("edit connection");
-    assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
+    assert!(palette_offers_command(&screen), "{screen}");
     assert!(screen.contains(&target), "{screen}");
 }
 
@@ -838,18 +838,18 @@ fn the_palette_finds_grid_commands_and_technical_aliases() {
         "select all",
     ] {
         let screen = s.palette(query);
-        assert!(!screen.contains(text::NO_COMMANDS), "{query}: {screen}");
+        assert!(palette_offers_command(&screen), "{query}: {screen}");
         s.code(KeyCode::Esc);
     }
     s.choose("copy cell");
     assert_eq!(s.clipboard.borrow().text, "1\n");
     s.prefix('k');
     let screen = s.palette("EXPLAIN");
-    assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
+    assert!(palette_offers_command(&screen), "{screen}");
     s.code(KeyCode::Esc);
     crate::common::select_row(&mut s.app, 0, &[RowKind::Table], "items");
     let screen = s.palette("DDL");
-    assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
+    assert!(palette_offers_command(&screen), "{screen}");
     assert!(screen.contains("items"), "{screen}");
 }
 
@@ -865,7 +865,7 @@ fn the_palette_hides_row_commands_for_an_empty_result() {
         "select all",
     ] {
         let screen = s.palette(query);
-        assert!(screen.contains(text::NO_COMMANDS), "{query}: {screen}");
+        assert!(!palette_offers_command(&screen), "{query}: {screen}");
         s.code(KeyCode::Esc);
     }
 }
@@ -881,7 +881,7 @@ fn a_failed_transaction_offers_rollback_but_not_commit_in_each_access() {
     let screen = s.palette("commit");
     assert!(!screen.contains("Ctrl+W C"), "{screen}");
     s.code(KeyCode::Esc);
-    assert!(!s.palette("rollback").contains(text::NO_COMMANDS));
+    assert!(palette_offers_command(&s.palette("rollback")));
 }
 
 #[test]
@@ -1076,7 +1076,7 @@ fn table_and_diagram_pages_fit_and_run_their_local_commands() {
     s.prefix('D');
     s.wait(|app| app.diagram().is_some_and(|tab| !tab.is_busy()));
     let screen = s.palette("Mermaid");
-    assert!(!screen.contains(text::NO_COMMANDS), "{screen}");
+    assert!(palette_offers_command(&screen), "{screen}");
     s.code(KeyCode::Esc);
     let groups = s.app.context_menu();
     s.prefix(' ');
@@ -1095,7 +1095,7 @@ fn table_filters_and_order_are_available_in_the_palette() {
     s.wait(|app| app.table().is_some_and(|tab| !tab.is_busy()));
     for query in ["WHERE filter", "ORDER BY", "sort column", "apply where"] {
         let screen = s.palette(query);
-        assert!(!screen.contains(text::NO_COMMANDS), "{query}: {screen}");
+        assert!(palette_offers_command(&screen), "{query}: {screen}");
         s.code(KeyCode::Esc);
     }
     s.code(KeyCode::Char('f'));
@@ -1129,7 +1129,7 @@ fn palette_offers(app: &mut App, action: Action) -> bool {
     app.on_event(Event::Key(ctrl('p')));
     app.on_event(Event::Paste(action.name().to_owned()));
     let screen = draw_screen(app);
-    let found = screen.contains(text::TITLE_PALETTE) && !screen.contains(text::NO_COMMANDS);
+    let found = palette_offers_command(&screen);
     app.on_event(Event::Key(key(KeyCode::Esc)));
     found
 }

@@ -9,7 +9,7 @@ use crate::exec::ConnectionId;
 use crate::grid::printable;
 use crate::input::{Action, Region};
 use crate::navigator::RowKind;
-use crate::palette::{Command, Palette, PaletteRequest};
+use crate::palette::{Command, Palette, PaletteRequest, Target};
 use crate::plan::Explain;
 use crate::structure::{has_locks, has_sessions};
 use crate::table::TableFocus;
@@ -408,7 +408,7 @@ impl App {
 
     pub(super) fn open_palette(&mut self) {
         self.console_mut().editor.close_suggestions();
-        let commands = self
+        let mut commands: Vec<Command> = self
             .palette_actions()
             .into_iter()
             .map(|action| {
@@ -419,17 +419,29 @@ impl App {
                 };
                 let key_works = action.region() == Region::Global
                     || Some(action.region()) == self.context_region();
-                Command {
-                    action,
-                    label,
-                    key: if key_works {
-                        self.shown_key(action)
-                    } else {
-                        None
-                    },
-                }
+                let key = if key_works {
+                    self.shown_key(action)
+                } else {
+                    None
+                };
+                Command::action(action, label, key)
             })
             .collect();
+        // Each help page is a row after the actions. The filter reads its full text.
+        if self.command_available(Action::Help) {
+            let help = self.help();
+            commands.extend(
+                help.page_titles()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(page, title)| Command {
+                        target: Target::Help(page),
+                        label: text::help_command(title),
+                        key: None,
+                        words: help.page_text(page),
+                    }),
+            );
+        }
         self.modals.palette = Some(Palette::new(commands));
     }
 
@@ -450,6 +462,12 @@ impl App {
                 if self.command_available(action) {
                     self.perform(action, false);
                 }
+            }
+            PaletteRequest::Help(page) => {
+                self.modals.palette = None;
+                let mut help = self.help();
+                help.open_page(page);
+                self.modals.help = Some(help);
             }
         }
     }

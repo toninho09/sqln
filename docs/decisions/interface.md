@@ -2,6 +2,17 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Help pages in the palette — 2026-11-27
+
+The user asked to find help from `Ctrl+P`. For example, the words of a Kafka statement find the help page that explains it.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Pages | The palette lists each page of the help as **Help: <page>**: the guide topics, **All keys**, and each key group, after the commands | Only the guide topics | User choice |
+| Search | The filter of a help row reads the full text of the page: title, text, steps, and examples, or the keys of a group | Only the name and the title | User choice. `emit changes` finds **Help: Kafka** |
+| Model | A palette row holds a command or a help page. The guide stays data, with no new `Action` and no new shortcut | One `Action` per topic | User choice. A new topic needs no new command |
+| Open | A help row opens `F1` on its page. The rows show only when the help is available | A separate window | The help keeps its keys, filter, and copy |
+
 ## Connection order and folders — 2026-11-16
 
 The user asked to change the order of the connections in the explorer and to group them in folders, in the most friendly way. The user chose the points below.

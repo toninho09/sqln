@@ -142,6 +142,11 @@ pub const HOME_LOGO: [&str; 5] = [
 ];
 
 /// Writes the name and the version for the first screen.
+/// Returns the palette row of a help page.
+pub fn help_command(page: &str) -> String {
+    format!("Help: {page}")
+}
+
 pub fn welcome_title() -> String {
     format!("SQLN {}", env!("CARGO_PKG_VERSION"))
 }

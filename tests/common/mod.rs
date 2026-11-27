@@ -7,7 +7,28 @@ pub use sqln_testkit::*;
 
 use crossterm::event::{Event, KeyCode};
 use sqln::app::App;
+use sqln::ui::text;
 use sqln::ui::which_key::KeyGroup;
+
+/// Returns true when the palette window of a drawn screen shows a command row.
+/// A help page row is not a command.
+pub fn palette_offers_command(screen: &str) -> bool {
+    let top = format!("╭ {} ", text::TITLE_PALETTE);
+    let help = text::help_command("");
+    screen
+        .lines()
+        .skip_while(|line| !line.contains(&top))
+        .skip(1)
+        .take_while(|line| !line.contains('╰'))
+        .filter_map(|line| line.split('│').nth(1))
+        .map(str::trim)
+        .any(|row| {
+            !row.is_empty()
+                && !row.starts_with('>')
+                && !row.starts_with(text::NO_COMMANDS)
+                && !row.starts_with(&help)
+        })
+}
 
 /// Lists the rows of a page of the `Ctrl+W` menu, as `key label`.
 fn menu_rows(groups: Vec<KeyGroup>) -> Vec<String> {

@@ -1425,6 +1425,7 @@ The JSON stays compact in this window. `f` toggles formatting only in the cell v
 
 `F1` opens a window with a sidebar. The sidebar lists the pages: the five guide topics, **All keys**, then each key group.
 `F1` always opens on the first topic. The sidebar scrolls the smallest number of rows that keeps the open page in view.
+The palette (`Ctrl+P`) lists each page as **Help: <page>**, after the commands. Its filter reads the full text of the page, so `emit changes` finds **Help: Kafka**. A help row opens this window on its page.
 
 The guide topics are: **Connect**, **Run SQL**, **Tables**, **Kafka**, and **Scripts**.
 Each topic has a title, a short text, steps, and examples. Each step shows the effective key of the active mode and the custom shortcuts.

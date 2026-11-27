@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::common::{ctrl, key};
+use crate::common::{alt, ctrl, key};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -333,11 +333,34 @@ fn an_empty_reference_keeps_group_navigation_valid() {
 }
 
 fn app(options: Options) -> App {
-    App::new(
-        options,
-        Rc::new(RefCell::new(MemoryClipboard::default())),
-        Theme::plain(),
-    )
+    app_with_clipboard(options).0
+}
+
+fn app_with_clipboard(options: Options) -> (App, Rc<RefCell<MemoryClipboard>>) {
+    let clipboard = Rc::new(RefCell::new(MemoryClipboard::default()));
+    let app = App::new(options, clipboard.clone(), Theme::plain());
+    (app, clipboard)
+}
+
+/// Types a filter in the open palette.
+fn type_text(app: &mut App, text: &str) {
+    for c in text.chars() {
+        app.on_event(Event::Key(key(KeyCode::Char(c))));
+    }
+}
+
+/// Copies the open help page and returns its text.
+fn copied_page(app: &mut App, clipboard: &RefCell<MemoryClipboard>) -> String {
+    app.on_event(Event::Key(ctrl('c')));
+    clipboard.borrow().text.clone()
+}
+
+fn kafka_title() -> &'static str {
+    text::GUIDE
+        .iter()
+        .find(|topic| topic.name == "Kafka")
+        .unwrap()
+        .title
 }
 
 fn app_screen(app: &mut App) -> String {
@@ -447,4 +470,79 @@ fn the_kafka_topic_shows_the_select_examples_at_the_minimum_size() {
         shown.contains("SELECT * FROM orders EMIT CHANGES;"),
         "{shown}"
     );
+}
+
+#[test]
+fn the_page_text_is_the_copy_of_each_page() {
+    let mut help = reference();
+    for page in 0..help.page_titles().len() {
+        help.open_page(page);
+        assert_eq!(help.page_text(page), help.text(), "page {page}");
+    }
+}
+
+#[test]
+fn the_palette_opens_a_help_topic_by_its_name_at_the_minimum_size() {
+    let (mut app, clipboard) = app_with_clipboard(Options::default());
+    app.on_event(Event::Key(ctrl('p')));
+    type_text(&mut app, "help kafka");
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    assert!(shown.contains(&text::help_command("Kafka")), "{shown}");
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    let shown = screen(80, 24, |frame| app.draw(frame));
+    assert!(shown.contains(kafka_title()), "{shown}");
+    assert!(copied_page(&mut app, &clipboard).starts_with(kafka_title()));
+}
+
+#[test]
+fn the_palette_finds_a_help_topic_by_a_word_of_its_text() {
+    let (mut app, clipboard) = app_with_clipboard(Options::default());
+    app.on_event(Event::Key(ctrl('p')));
+    type_text(&mut app, "emit changes");
+    let shown = app_screen(&mut app);
+    assert!(shown.contains(&text::help_command("Kafka")), "{shown}");
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    assert!(copied_page(&mut app, &clipboard).starts_with(kafka_title()));
+    // The help is open, and the editor got no text.
+    assert!(app.console().editor.is_blank());
+}
+
+#[test]
+fn the_palette_opens_a_key_group_page() {
+    let filter = "help: transaction";
+    let mut found = false;
+    for down in 0..8 {
+        let (mut app, clipboard) = app_with_clipboard(Options::default());
+        app.on_event(Event::Key(ctrl('p')));
+        type_text(&mut app, filter);
+        assert!(
+            app_screen(&mut app).contains(&text::help_command(text::GROUP_TRANSACTION)),
+            "{filter}"
+        );
+        for _ in 0..down {
+            app.on_event(Event::Key(key(KeyCode::Down)));
+        }
+        app.on_event(Event::Key(key(KeyCode::Enter)));
+        let page = copied_page(&mut app, &clipboard);
+        if page.starts_with(&format!("{}\n", text::GROUP_TRANSACTION)) {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "no row opens the {} page", text::GROUP_TRANSACTION);
+}
+
+#[test]
+fn the_palette_opens_help_in_vim_mode_with_a_custom_palette_key() {
+    let overrides = HashMap::from([("openPalette".to_owned(), vec!["alt+p".to_owned()])]);
+    let keymap = Keymap::with_overrides(KeyboardMode::Vim, &overrides).unwrap();
+    let (mut app, clipboard) = app_with_clipboard(Options {
+        keyboard: KeyboardMode::Vim,
+        keymap: Some(keymap),
+        ..Options::default()
+    });
+    app.on_event(Event::Key(alt(KeyCode::Char('p'))));
+    type_text(&mut app, "help kafka");
+    app.on_event(Event::Key(key(KeyCode::Enter)));
+    assert!(copied_page(&mut app, &clipboard).starts_with(kafka_title()));
 }

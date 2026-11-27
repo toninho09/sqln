@@ -1437,8 +1437,18 @@ fn palette_has(app: &mut App, action: Action) -> bool {
     app.drain_events();
     app.on_event(Event::Key(ctrl('p')));
     app.on_event(Event::Paste(action.name().to_owned()));
-    let shown = screen(app);
-    let found = shown.contains(text::TITLE_PALETTE) && !shown.contains(text::NO_COMMANDS);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    // The palette check reads the screen row by row.
+    let shown = terminal
+        .backend()
+        .buffer()
+        .content
+        .chunks(80)
+        .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let found = crate::common::palette_offers_command(&shown);
     app.on_event(Event::Key(key(KeyCode::Esc)));
     found
 }

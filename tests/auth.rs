@@ -1195,7 +1195,7 @@ fn paste_palette(f: &mut Fixture, query: &str) {
     f.app.on_event(Event::Key(ctrl('p')));
     f.paste(query);
     assert!(
-        !f.screen().contains("No command matches"),
+        crate::common::palette_offers_command(&f.screen()),
         "{query}: {}",
         f.screen()
     );

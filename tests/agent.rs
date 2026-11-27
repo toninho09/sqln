@@ -2525,7 +2525,7 @@ fn palette_has(h: &mut Harness, action: Action) -> bool {
     h.app.on_event(Event::Paste(action.name().to_owned()));
     let screen = h.draw(100, 30);
     h.key(KeyCode::Esc);
-    screen.contains(sqln::ui::text::TITLE_PALETTE) && !screen.contains(sqln::ui::text::NO_COMMANDS)
+    crate::common::palette_offers_command(&screen)
 }
 
 #[test]
