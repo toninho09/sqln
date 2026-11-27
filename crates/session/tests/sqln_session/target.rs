@@ -307,3 +307,97 @@ fn a_databricks_warehouse_is_required_and_belongs_only_to_databricks() {
         assert!(parse_uri(uri).is_err(), "{uri}");
     }
 }
+
+#[test]
+fn the_command_line_reads_the_connection_options_of_the_text() {
+    use sqln_session::connector::target::parse_uri_options;
+    use std::time::Duration;
+    let (target, options) = parse_uri_options(
+        "postgres://u@h/d?read_only=true&production=on&pool=2&connect_timeout=9&sql_timeout=0&idle_timeout=60",
+    )
+    .unwrap();
+    assert_eq!(target.engine, Engine::Postgres);
+    assert_eq!(options.read_only, Some(true));
+    assert_eq!(options.production, Some(true));
+    assert_eq!(options.pool, Some(2));
+    assert_eq!(options.connect_timeout, Some(Duration::from_secs(9)));
+    assert_eq!(options.sql_timeout, Some(None), "0 removes the limit");
+    assert_eq!(options.idle_timeout, Some(Some(Duration::from_secs(60))));
+
+    let (_, options) =
+        parse_uri_options("kafka://h?registry=https://r.test&registry_user=a%40b&max_scan=50")
+            .unwrap();
+    assert_eq!(options.registry_user.as_deref(), Some("a@b"));
+    assert_eq!(options.max_scan, Some(50));
+}
+
+#[test]
+fn a_bad_connection_option_names_the_parameter_and_not_the_value() {
+    use sqln_session::connector::target::parse_uri_options;
+    for (text, message) in [
+        (
+            "postgres://u@h/d?pool=0",
+            "pool needs a number greater than 0.",
+        ),
+        ("postgres://u@h/d?pool=many", "pool needs a number."),
+        (
+            "postgres://u@h/d?connect_timeout=0",
+            "connect_timeout needs a number greater than 0.",
+        ),
+        (
+            "postgres://u@h/d?read_only=maybe",
+            "read_only needs true, false, on, or off.",
+        ),
+        ("postgres://u@h/d?pool=1&pool=2", "Use pool only once."),
+        (
+            "kafka://h?max_scan=0",
+            "max_scan needs a number greater than 0.",
+        ),
+        (
+            "kafka://h?registry_user=",
+            "registry_user needs a user name.",
+        ),
+        (
+            "postgres://u@h/d?busy_timeout=1",
+            "Unknown connection parameter: busy_timeout",
+        ),
+    ] {
+        assert_eq!(parse_uri_options(text).unwrap_err(), message, "{text}");
+    }
+}
+
+#[test]
+fn the_form_text_refuses_the_options_of_the_command_line() {
+    let error = parse_uri("postgres://u@h/d?pool=2").unwrap_err();
+    assert_eq!(
+        error,
+        "pool is valid only on the command line. Use the form fields."
+    );
+    assert!(parse_uri("kafka://h?max_scan=5").is_err());
+}
+
+#[test]
+fn an_option_in_the_text_and_in_its_flag_is_refused() {
+    use sqln_session::connector::target::{ConnectionOptions, OptionName};
+    let mut flags = ConnectionOptions::default();
+    flags.set(OptionName::Pool, "3", "--pool").unwrap();
+    flags
+        .set(OptionName::ReadOnly, "true", "--read-only")
+        .unwrap();
+    assert_eq!(
+        flags.set(OptionName::Pool, "4", "--pool").unwrap_err(),
+        "Use --pool only once."
+    );
+    let mut uri = ConnectionOptions::default();
+    uri.set(OptionName::Pool, "2", "pool").unwrap();
+    assert_eq!(
+        flags.clone().merge(uri).unwrap_err(),
+        "Set pool in the URI or in --pool, not both."
+    );
+    let mut uri = ConnectionOptions::default();
+    uri.set(OptionName::SqlTimeout, "5", "sql_timeout").unwrap();
+    let merged = flags.merge(uri).unwrap();
+    assert_eq!(merged.pool, Some(3));
+    assert_eq!(merged.read_only, Some(true));
+    assert!(merged.sql_timeout.is_some());
+}

@@ -1495,6 +1495,10 @@ Stop and transaction actions take priority, then panel actions. Unavailable acti
 Navigator row actions require navigator focus. Add connection and scripts without a connection remain global.
 Actions name their target where needed. A panel shortcut appears only where that shortcut works.
 The palette includes Apply filters and Clear filters for table filters without adding default shortcuts.
+After the commands, the palette lists each field of the current connection form as **Connection: <field> = <value> — <connection>**, and each field of the Settings dialog as **Setting: <field> = <value> — <section>**. A secret field shows no value.
+The current connection is the explorer row while the explorer has the focus, else the connection of the open tab. A connection without a saved definition has no rows.
+A field row opens its form on the section of the field, with the focus on the field. A connected connection opens the restricted form. When that form does not show the field, the focus goes to **Disconnect**, with the note "Disconnect to change <field>."
+For example, `pool limit` finds **Connection: Pool limit = 5 — prod**.
 The window has 64 columns and 12 list rows, and grows to 100 columns and 30 rows on a larger screen. It stays on top.
 
 ```text

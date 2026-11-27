@@ -2,6 +2,19 @@
 
 Part of the [decision record](../DECISIONS.md). The rules at the top of that file apply here.
 
+## Settings in the palette — 2026-11-27
+
+The user asked to type a setting in `Ctrl+P`, such as `pool limit`, and open that field in its section.
+
+| Point | Decision | Rejected | Reason |
+|---|---|---|---|
+| Scope | The fields of the current connection form and the fields of the Settings dialog | Only the connection | User choice |
+| Row | **Connection: <field> = <value> — <connection>** and **Setting: <field> = <value> — <section>**, after the commands and before the help pages. A secret field and the provider key show no value | No value | User choice |
+| Current connection | The explorer row while the explorer has the focus, else the connection of the open tab. A connection without a saved definition has no rows | The connection of the console only | The same rule as the sessions and the locks |
+| Connected connection | The restricted form opens. When it does not show the field, the focus goes to **Disconnect**, with the note "Disconnect to change <field>." | A question that disconnects; only the visible fields | User choice |
+| Model | A palette row holds a field. No new `Action` and no new shortcut | One `Action` per field | The rule of the help pages. A new field needs no new command |
+| Settings rows | The palette reads the files as the Settings dialog does. A configuration that the dialog cannot open gives no setting rows | Show rows that fail | The dialog gives the reason when the user opens it |
+
 ## Help pages in the palette — 2026-11-27
 
 The user asked to find help from `Ctrl+P`. For example, the words of a Kafka statement find the help page that explains it.

@@ -147,6 +147,34 @@ pub fn help_command(page: &str) -> String {
     format!("Help: {page}")
 }
 
+/// The start of the palette row of a field of the connection form.
+pub const CONNECTION_FIELD_ROW: &str = "Connection: ";
+/// The start of the palette row of a field of the settings dialog.
+pub const SETTING_ROW: &str = "Setting: ";
+
+/// Returns the palette row of a field: `Connection: Pool limit = 5 — prod`.
+fn field_command(start: &str, label: &str, value: Option<&str>, place: &str) -> String {
+    match value {
+        Some(value) => format!("{start}{label} = {value} — {place}"),
+        None => format!("{start}{label} — {place}"),
+    }
+}
+
+/// Returns the palette row of a field of the connection form.
+pub fn connection_field_command(label: &str, value: Option<&str>, connection: &str) -> String {
+    field_command(CONNECTION_FIELD_ROW, label, value, connection)
+}
+
+/// Returns the palette row of a field of the settings dialog.
+pub fn setting_command(label: &str, value: Option<&str>, section: &str) -> String {
+    field_command(SETTING_ROW, label, value, section)
+}
+
+/// The note of a connected form that does not show the field that the palette opens.
+pub fn disconnect_to_change(label: &str) -> String {
+    format!("Disconnect to change {label}.")
+}
+
 pub fn welcome_title() -> String {
     format!("SQLN {}", env!("CARGO_PKG_VERSION"))
 }

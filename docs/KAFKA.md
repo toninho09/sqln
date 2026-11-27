@@ -44,6 +44,8 @@ kafka://localhost:9092?group=reads-billing
 
 - `kafkas` verifies the server certificate with the system roots. Add `ca=<file>` for a private CA.
 - `registry=<url>` points to the Schema Registry. The form has the same field, with an optional user.
+- `registry_user=<user>` or `--registry-user <user>` sets the user of the registry on the command line. SQLN asks for its password on the terminal.
+- `max_scan=<n>` or `--max-scan <n>` sets the max scan of a command-line connection. `--execute` refuses it, because a batch read reads all messages.
 - `group=<id>` sets the `group.id` that reads report to the cluster. Without it, reads use `sqln-read`. SQLN never joins the group and never commits.
 - `topics=<patterns>` limits the topics of the catalog. The form has the same **Topics** field, and `config.json` has `topics`.
 

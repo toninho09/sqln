@@ -57,6 +57,15 @@ pub fn password_prompt(user: &str) -> String {
     format!("Password for {user} (Enter for none): ")
 }
 pub const TOKEN_PROMPT: &str = "Databricks personal access token: ";
+/// The question of the command line for a Schema Registry user without a password.
+pub fn registry_password_prompt(user: &str) -> String {
+    format!("Schema Registry password for {user} (Enter for none): ")
+}
+pub const READ_ONLY_NO_FILE: &str =
+    "The database file does not exist. A read-only connection cannot create it.";
+/// The refusal of connection options without a target.
+pub const OPTIONS_NEED_TARGET: &str =
+    "Connection options need a target. Change the options of a saved connection in its form.";
 
 // Files: the configuration, the project, and the saved consoles.
 pub const TITLE_CREATE_PROJECT: &str = "Create project";

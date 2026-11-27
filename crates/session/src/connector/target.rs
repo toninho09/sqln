@@ -4,6 +4,7 @@
 use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -330,8 +331,230 @@ pub enum OpenTarget {
     File(PathBuf),
     /// A DuckDB file or one database in memory. The text is empty for memory.
     Duckdb(String),
-    /// Boxed, because a network target is much larger than a path.
-    Network(Box<NetworkTarget>),
+    /// Boxed, because a network target is much larger than a path. The options are
+    /// the parameters of the connection text that only the command line accepts.
+    Network {
+        target: Box<NetworkTarget>,
+        options: ConnectionOptions,
+    },
+}
+
+/// A connection option of the command line. A flag or a parameter of the connection
+/// text sets it. The connection form has its own fields for these options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OptionName {
+    ReadOnly,
+    Production,
+    Pool,
+    ConnectTimeout,
+    SqlTimeout,
+    IdleTimeout,
+    ForeignKeys,
+    BusyTimeout,
+    RegistryUser,
+    MaxScan,
+}
+
+impl OptionName {
+    pub const ALL: [OptionName; 10] = [
+        OptionName::ReadOnly,
+        OptionName::Production,
+        OptionName::Pool,
+        OptionName::ConnectTimeout,
+        OptionName::SqlTimeout,
+        OptionName::IdleTimeout,
+        OptionName::ForeignKeys,
+        OptionName::BusyTimeout,
+        OptionName::RegistryUser,
+        OptionName::MaxScan,
+    ];
+
+    pub fn flag(self) -> &'static str {
+        match self {
+            OptionName::ReadOnly => "--read-only",
+            OptionName::Production => "--production",
+            OptionName::Pool => "--pool",
+            OptionName::ConnectTimeout => "--connect-timeout",
+            OptionName::SqlTimeout => "--sql-timeout",
+            OptionName::IdleTimeout => "--idle-timeout",
+            OptionName::ForeignKeys => "--foreign-keys",
+            OptionName::BusyTimeout => "--busy-timeout",
+            OptionName::RegistryUser => "--registry-user",
+            OptionName::MaxScan => "--max-scan",
+        }
+    }
+
+    /// Returns the parameter of the connection text. A SQLite option has no parameter,
+    /// because a SQLite target is a path.
+    pub fn param(self) -> Option<&'static str> {
+        match self {
+            OptionName::ReadOnly => Some("read_only"),
+            OptionName::Production => Some("production"),
+            OptionName::Pool => Some("pool"),
+            OptionName::ConnectTimeout => Some("connect_timeout"),
+            OptionName::SqlTimeout => Some("sql_timeout"),
+            OptionName::IdleTimeout => Some("idle_timeout"),
+            OptionName::ForeignKeys | OptionName::BusyTimeout => None,
+            OptionName::RegistryUser => Some("registry_user"),
+            OptionName::MaxScan => Some("max_scan"),
+        }
+    }
+
+    /// Returns the name of the field of the connection form.
+    pub fn title(self) -> &'static str {
+        match self {
+            OptionName::ReadOnly => "Read only",
+            OptionName::Production => "Production",
+            OptionName::Pool => "Pool",
+            OptionName::ConnectTimeout => "Connect timeout",
+            OptionName::SqlTimeout => "SQL timeout",
+            OptionName::IdleTimeout => "Idle timeout",
+            OptionName::ForeignKeys => "Foreign keys",
+            OptionName::BusyTimeout => "Busy timeout",
+            OptionName::RegistryUser => "Registry user",
+            OptionName::MaxScan => "Max scan",
+        }
+    }
+
+    /// Returns true for a flag without a value.
+    pub fn is_switch(self) -> bool {
+        matches!(self, OptionName::ReadOnly | OptionName::Production)
+    }
+
+    pub fn from_flag(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|name| name.flag() == text)
+    }
+
+    pub fn from_param(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|name| name.param() == Some(text))
+    }
+}
+
+/// The connection options of the command line. `None` keeps the default of the
+/// connection.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConnectionOptions {
+    pub read_only: Option<bool>,
+    pub production: Option<bool>,
+    pub pool: Option<usize>,
+    pub connect_timeout: Option<Duration>,
+    /// `Some(None)` runs the statements without a time limit.
+    pub sql_timeout: Option<Option<Duration>>,
+    /// `Some(None)` keeps the idle sessions open.
+    pub idle_timeout: Option<Option<Duration>>,
+    pub foreign_keys: Option<bool>,
+    pub busy_timeout: Option<Duration>,
+    pub registry_user: Option<String>,
+    pub max_scan: Option<u64>,
+}
+
+fn switch(value: &str, label: &str) -> Result<bool, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "on" => Ok(true),
+        "false" | "off" => Ok(false),
+        _ => Err(format!("{label} needs true, false, on, or off.")),
+    }
+}
+
+fn number(value: &str, label: &str) -> Result<u64, String> {
+    value.parse().map_err(|_| text::form_needs_number(label))
+}
+
+fn positive(value: &str, label: &str) -> Result<u64, String> {
+    match number(value, label)? {
+        0 => Err(format!("{label} needs a number greater than 0.")),
+        number => Ok(number),
+    }
+}
+
+/// Reads a time limit in seconds. 0 means no limit.
+fn limit(value: &str, label: &str) -> Result<Option<Duration>, String> {
+    let seconds = number(value, label)?;
+    Ok((seconds > 0).then(|| Duration::from_secs(seconds)))
+}
+
+impl ConnectionOptions {
+    /// Returns true when the option has a value.
+    pub fn has(&self, name: OptionName) -> bool {
+        match name {
+            OptionName::ReadOnly => self.read_only.is_some(),
+            OptionName::Production => self.production.is_some(),
+            OptionName::Pool => self.pool.is_some(),
+            OptionName::ConnectTimeout => self.connect_timeout.is_some(),
+            OptionName::SqlTimeout => self.sql_timeout.is_some(),
+            OptionName::IdleTimeout => self.idle_timeout.is_some(),
+            OptionName::ForeignKeys => self.foreign_keys.is_some(),
+            OptionName::BusyTimeout => self.busy_timeout.is_some(),
+            OptionName::RegistryUser => self.registry_user.is_some(),
+            OptionName::MaxScan => self.max_scan.is_some(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Sets one option from its text. `label` is the flag or the parameter that the user
+    /// typed. The error never holds the value.
+    pub fn set(&mut self, name: OptionName, value: &str, label: &str) -> Result<(), String> {
+        if self.has(name) {
+            return Err(format!("Use {label} only once."));
+        }
+        let value = value.trim();
+        match name {
+            OptionName::ReadOnly => self.read_only = Some(switch(value, label)?),
+            OptionName::Production => self.production = Some(switch(value, label)?),
+            OptionName::Pool => {
+                self.pool = Some(usize::try_from(positive(value, label)?).unwrap_or(usize::MAX));
+            }
+            OptionName::ConnectTimeout => {
+                self.connect_timeout = Some(Duration::from_secs(positive(value, label)?));
+            }
+            OptionName::SqlTimeout => self.sql_timeout = Some(limit(value, label)?),
+            OptionName::IdleTimeout => self.idle_timeout = Some(limit(value, label)?),
+            OptionName::ForeignKeys => self.foreign_keys = Some(switch(value, label)?),
+            OptionName::BusyTimeout => {
+                self.busy_timeout = Some(Duration::from_secs(number(value, label)?));
+            }
+            OptionName::RegistryUser => {
+                if value.is_empty() || value.chars().any(char::is_control) {
+                    return Err(format!("{label} needs a user name."));
+                }
+                self.registry_user = Some(value.to_owned());
+            }
+            OptionName::MaxScan => self.max_scan = Some(positive(value, label)?),
+        }
+        Ok(())
+    }
+
+    /// Joins the flags with the parameters of the connection text. One option in both
+    /// places is refused, so no value changes without a message.
+    pub fn merge(self, uri: Self) -> Result<Self, String> {
+        if let Some(name) = OptionName::ALL
+            .into_iter()
+            .find(|name| self.has(*name) && uri.has(*name))
+        {
+            return Err(format!(
+                "Set {} in the URI or in {}, not both.",
+                name.param().unwrap_or(name.flag()),
+                name.flag()
+            ));
+        }
+        Ok(Self {
+            read_only: self.read_only.or(uri.read_only),
+            production: self.production.or(uri.production),
+            pool: self.pool.or(uri.pool),
+            connect_timeout: self.connect_timeout.or(uri.connect_timeout),
+            sql_timeout: self.sql_timeout.or(uri.sql_timeout),
+            idle_timeout: self.idle_timeout.or(uri.idle_timeout),
+            foreign_keys: self.foreign_keys.or(uri.foreign_keys),
+            busy_timeout: self.busy_timeout.or(uri.busy_timeout),
+            registry_user: self.registry_user.or(uri.registry_user),
+            max_scan: self.max_scan.or(uri.max_scan),
+        })
+    }
 }
 
 /// The scheme that marks a DuckDB target.
@@ -346,7 +569,10 @@ pub fn open_target(text: &str) -> Result<OpenTarget, String> {
         return Ok(OpenTarget::Duckdb(rest.to_owned()));
     }
     if text.contains("://") {
-        parse_uri(text).map(|target| OpenTarget::Network(Box::new(target)))
+        parse_uri_options(text).map(|(target, options)| OpenTarget::Network {
+            target: Box::new(target),
+            options,
+        })
     } else {
         Ok(OpenTarget::File(PathBuf::from(text)))
     }
@@ -400,6 +626,7 @@ struct Parameters {
     group: Option<String>,
     topics: Vec<String>,
     warehouse: Option<String>,
+    options: ConnectionOptions,
 }
 
 impl Parameters {
@@ -426,7 +653,10 @@ impl Parameters {
                 "group" => parameters.group = consumer_group(&value)?,
                 "topics" => parameters.topics = topic_filter(&value)?,
                 "warehouse" => parameters.warehouse = Some(warehouse_id(&value)?),
-                other => return Err(format!("Unknown connection parameter: {other}")),
+                other => match OptionName::from_param(other) {
+                    Some(option) => parameters.options.set(option, &value, other)?,
+                    None => return Err(format!("Unknown connection parameter: {other}")),
+                },
             }
         }
         Ok(parameters)
@@ -511,9 +741,22 @@ pub fn hide_uri_password(uri: &str, mask: char) -> String {
     format!("{scheme}://{user}:{hidden}@{place}{tail}")
 }
 
-/// Reads `postgres://user:password@host:port/database?sslmode=verify-full`.
+/// Reads `postgres://user:password@host:port/database?sslmode=verify-full`. The
+/// connection form uses it, so the options of the command line are refused.
 /// The error text never holds the text of the input, because it can hold a password.
 pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
+    let (target, options) = parse_uri_options(uri)?;
+    match OptionName::ALL.into_iter().find(|name| options.has(*name)) {
+        Some(name) => Err(format!(
+            "{} is valid only on the command line. Use the form fields.",
+            name.param().unwrap_or(name.flag())
+        )),
+        None => Ok(target),
+    }
+}
+
+/// Reads a connection text of the command line, with its connection options.
+pub fn parse_uri_options(uri: &str) -> Result<(NetworkTarget, ConnectionOptions), String> {
     let (scheme, rest) = uri
         .split_once("://")
         .ok_or("The connection text needs a scheme.")?;
@@ -607,8 +850,9 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
             port: port.unwrap_or(engine.default_port()),
         },
     };
+    let options = std::mem::take(&mut parameters.options);
     let tls = parameters.tls()?;
-    Ok(NetworkTarget {
+    let target = NetworkTarget {
         engine,
         address,
         user,
@@ -617,5 +861,6 @@ pub fn parse_uri(uri: &str) -> Result<NetworkTarget, String> {
         tls,
         kafka,
         databricks,
-    })
+    };
+    Ok((target, options))
 }

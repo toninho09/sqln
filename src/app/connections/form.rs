@@ -23,7 +23,7 @@ impl App {
         }
     }
 
-    pub(super) fn edit_connection(&mut self, id: ConnectionId) {
+    pub(in crate::app) fn edit_connection(&mut self, id: ConnectionId) {
         let Some(definition) = self
             .connection(id)
             .and_then(|item| item.definition.as_ref())

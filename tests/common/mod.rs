@@ -11,7 +11,7 @@ use sqln::ui::text;
 use sqln::ui::which_key::KeyGroup;
 
 /// Returns true when the palette window of a drawn screen shows a command row.
-/// A help page row is not a command.
+/// A help page row and a field row are not commands.
 pub fn palette_offers_command(screen: &str) -> bool {
     let top = format!("╭ {} ", text::TITLE_PALETTE);
     let help = text::help_command("");
@@ -27,6 +27,8 @@ pub fn palette_offers_command(screen: &str) -> bool {
                 && !row.starts_with('>')
                 && !row.starts_with(text::NO_COMMANDS)
                 && !row.starts_with(&help)
+                && !row.starts_with(text::CONNECTION_FIELD_ROW)
+                && !row.starts_with(text::SETTING_ROW)
         })
 }
 

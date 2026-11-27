@@ -196,6 +196,32 @@ For password-protected Redis, Valkey, or Kafka with SASL, use the connection for
 For Databricks, type a personal access token in the **Token** field of the form. The path of the connection text is the start catalog, and `warehouse=<id>` is the SQL warehouse.
 
 A command-line connection lasts for the session only. It does not create a saved connection or saved consoles for that target.
+
+A command-line target also takes the options of the connection form, as flags or as URI parameters:
+
+```sh
+sqln app.db --read-only --busy-timeout 10 --foreign-keys on
+sqln 'postgres://alice@db.example.com/app' --production --pool 2 --sql-timeout 0
+sqln 'mysql://alice@db.example.com/app?read_only=true&connect_timeout=5'
+sqln 'kafkas://kafka.example.com:9093?registry=https://registry.example.com' --registry-user reader --max-scan 5000
+```
+
+| Flag | URI parameter | Applies to |
+|---|---|---|
+| `--read-only` | `read_only=true` | All, except Kafka |
+| `--production` | `production=true` | All |
+| `--pool <n>` | `pool=<n>` | All |
+| `--connect-timeout <s>` | `connect_timeout=<s>` | Network connections |
+| `--sql-timeout <s>` (0 removes the limit) | `sql_timeout=<s>` | All |
+| `--idle-timeout <s>` (0 keeps sessions open) | `idle_timeout=<s>` | All |
+| `--foreign-keys on\|off` | — | SQLite |
+| `--busy-timeout <s>` | — | SQLite |
+| `--registry-user <user>` | `registry_user=<user>` | Kafka with `registry=` |
+| `--max-scan <n>` | `max_scan=<n>` | Kafka, not with `--execute` |
+
+Set each option in the URI or in its flag, not in both. The options need a target: a saved connection keeps the options of its form.
+With `--registry-user`, SQLN asks for the Schema Registry password on the terminal.
+The URI field of the connection form refuses these parameters; use the form fields there.
 To save a connection, start `sqln` and add it through the navigator.
 
 **Do not place passwords in shell commands.** A URI password can appear in shell history and process arguments.
@@ -307,6 +333,7 @@ GROUP billing
 See the [Kafka guide](docs/KAFKA.md) for a full walk-through with more examples.
 
 Press `Ctrl+P` for the command palette or `F1` for help in the main panels.
+The palette also finds each field of the current connection and of the Settings dialog: type `pool limit` and press `Enter` to open the field.
 
 ## Keyboard guide
 

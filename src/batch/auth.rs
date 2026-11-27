@@ -135,14 +135,7 @@ pub(super) fn authenticate(
         }
     }
     // Password-free authentication remains available, including local PostgreSQL sessions.
-    #[cfg(unix)]
-    let terminal = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .ok();
-    #[cfg(not(unix))]
-    let terminal: Option<std::fs::File> = None;
+    let terminal = controlling_terminal();
     // A Kafka user always authenticates with SASL, so it always needs a password.
     let sasl = target.engine == crate::connector::target::Engine::Kafka && !target.user.is_empty();
     if let Some(mut terminal) =
@@ -158,6 +151,36 @@ pub(super) fn authenticate(
         return Err(Error::failed(
             "The saved credential is not available. Set --password-file or SQLN_PASSWORD.",
         ));
+    }
+    Ok(())
+}
+
+/// Opens the controlling terminal for a password question. `None` when there is none.
+fn controlling_terminal() -> Option<std::fs::File> {
+    #[cfg(unix)]
+    return OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok();
+    #[cfg(not(unix))]
+    None
+}
+
+/// Asks for the Schema Registry password of a command-line target with a registry user.
+/// Only the terminal gives it, so the password does not go to the shell history. Without
+/// a terminal, the connector reads the system vault, as for a saved connection.
+pub(super) fn ask_registry_password(definition: &mut Definition) -> Result<(), Error> {
+    let Source::Network(target) = &mut definition.source else {
+        return Ok(());
+    };
+    if let Some(registry) = target.kafka.registry.as_mut()
+        && !registry.user.is_empty()
+        && registry.password.is_none()
+        && let Some(mut terminal) = controlling_terminal()
+    {
+        let prompt = crate::ui::text::registry_password_prompt(&printable(&registry.user));
+        registry.password = crate::terminal::read_password_to(&prompt, &mut terminal)?;
     }
     Ok(())
 }

@@ -108,6 +108,9 @@ impl App {
         }
         if path.exists() {
             self.add_sqlite(SqliteTarget::new(&path));
+        } else if self.target_options.read_only == Some(true) {
+            self.status = Some(text::READ_ONLY_NO_FILE.to_owned());
+            self.database = None;
         } else {
             self.show_dialog(
                 text::TITLE_CREATE,
@@ -120,13 +123,19 @@ impl App {
         }
     }
 
-    /// Adds the file of the command line. It follows the limits of the settings.
+    /// Adds the file of the command line. It follows the limits of the settings, and
+    /// the connection options of the command line replace them.
     fn add_sqlite(&mut self, target: SqliteTarget) -> Option<ConnectionId> {
         let mut definition = Definition::sqlite(target);
         definition.max_connections = self.settings.max_connections;
         definition.connect_timeout = self.settings.connect_timeout;
         definition.sql_timeout = self.settings.sql_timeout;
         definition.idle_timeout = self.settings.idle_timeout;
+        // `main` checks the options first, so this error is only a guard.
+        if let Err(message) = definition.apply(&self.target_options) {
+            self.status = Some(message);
+            return None;
+        }
         self.add_definition(definition)
     }
 

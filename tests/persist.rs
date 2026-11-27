@@ -5252,3 +5252,193 @@ fn an_edit_of_a_custom_theme_keeps_its_id_and_writes_at_the_save() {
     assert!(theme.contains(r#""name": "Renamed""#), "{theme}");
     assert!(theme.contains(r##""orange": "#005f87""##), "{theme}");
 }
+
+/// Opens the palette and writes a filter.
+fn palette_filter(session: &mut Session, filter: &str) {
+    session.press(ctrl('p'));
+    session.write(filter);
+}
+
+fn postgres_entry(id: &str, name: &str) -> String {
+    format!(
+        r#"{{"id":"{id}","name":"{name}","kind":"postgres","host":"h","database":"d","username":"u"}}"#
+    )
+}
+
+#[test]
+fn the_palette_opens_a_field_of_the_current_connection_with_its_value() {
+    let (store, base) = global_only("p-palette-field");
+    let db = database(&base, "one", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "pool limit");
+    session.assert_sees("Connection: Pool limit = 5 — one");
+    session.code(KeyCode::Enter);
+    let form = session.app.form().expect("the form is open");
+    assert_eq!(form.focus, Field::Pool);
+    assert_eq!(form.shown_section(), sqln::form::Group::Options);
+    assert_eq!(form.editing, Some(session.app.connections()[0].id));
+    session.assert_sees("Pool limit");
+}
+
+#[test]
+fn the_palette_lists_only_the_fields_of_the_kind_and_hides_the_password() {
+    let (store, base) = global_only("p-palette-kind");
+    let db = database(&base, "lite", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[
+            sqlite_entry("g1", "lite", &db.display().to_string()),
+            postgres_entry("g2", "pg"),
+        ],
+    );
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "lock limit");
+    session.assert_sees("Connection: Lock limit (seconds) = 5 — lite");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "connection: port");
+    session.assert_sees(text_no_commands());
+    session.code(KeyCode::Esc);
+
+    // The explorer row is the current connection while the explorer has the focus.
+    session.go_to_connection("pg");
+    palette_filter(&mut session, "connection: password");
+    session.assert_sees("Connection: Password — pg");
+    session.assert_not_sees("Password =");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "connection: port");
+    session.assert_sees("Connection: Port = 5432 — pg");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "lock limit");
+    session.assert_not_sees("Connection: Lock limit");
+}
+
+fn text_no_commands() -> &'static str {
+    sqln::ui::text::NO_COMMANDS
+}
+
+#[test]
+fn a_connected_connection_opens_the_restricted_form_with_a_note() {
+    let (store, base) = global_only("p-palette-connected");
+    let db = database(&base, "e", "CREATE TABLE t (v INTEGER);");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "busy", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.prefix('m');
+    session.write("INSERT INTO t VALUES (1);");
+    session.press(crate::common::shift(KeyCode::F(5)));
+    for _ in 0..2_000 {
+        session.app.drain_events();
+        if session.app.console().in_transaction() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(session.app.console().in_transaction());
+    palette_filter(&mut session, "pool limit");
+    session.code(KeyCode::Enter);
+    let form = session.app.form().expect("the form is open");
+    assert!(form.display_only);
+    assert_eq!(form.focus, Field::Disconnect);
+    assert_eq!(
+        form.note,
+        Some(FormNote::Info(
+            "Disconnect to change Pool limit.".to_owned()
+        ))
+    );
+    session.assert_sees("Disconnect to change Pool limit.");
+    session.code(KeyCode::Esc);
+    assert!(session.app.form().is_none());
+
+    palette_filter(&mut session, "connection: theme");
+    session.code(KeyCode::Enter);
+    let form = session.app.form().expect("the form is open");
+    assert_eq!(form.focus, Field::Theme);
+    assert!(
+        session.app.console().in_transaction(),
+        "nothing disconnects"
+    );
+}
+
+#[test]
+fn the_palette_opens_a_setting_on_its_section() {
+    let (store, _) = reopening_store("p-palette-setting", "{}");
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "setting undo");
+    session.assert_sees("Setting: Undo (MiB) = Default: 64 — Editor");
+    session.code(KeyCode::Enter);
+    let form = session.app.settings_form().expect("the settings are open");
+    assert_eq!(form.focus, SettingsField::UndoLimit);
+    assert_eq!(SECTIONS[form.section].title, "Editor");
+    session.assert_sees("Undo (MiB)");
+
+    // The key of the provider has no value in the palette.
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "setting: key");
+    session.assert_not_sees("Key =");
+}
+
+#[test]
+fn without_a_store_or_a_definition_the_palette_has_no_field_rows() {
+    let mut session = Session::with(Options::default());
+    palette_filter(&mut session, "setting");
+    session.assert_not_sees("Setting: ");
+    session.code(KeyCode::Esc);
+    palette_filter(&mut session, "connection:");
+    session.assert_not_sees("Connection: ");
+}
+
+#[test]
+fn a_long_value_keeps_the_row_on_one_line_at_the_minimum_size() {
+    let (store, base) = global_only("p-palette-small");
+    let folder = base.join("a-folder-with-a-long-name-for-the-palette-row");
+    fs::create_dir_all(&folder).unwrap();
+    let db = database(&folder, "small", "");
+    write_config(
+        &store.global,
+        "{}",
+        &[sqlite_entry("g1", "small", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    palette_filter(&mut session, "connection: file");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| session.app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let rows: Vec<String> = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
+        .collect();
+    let row = rows
+        .iter()
+        .find(|row| row.contains("Connection: File = "))
+        .unwrap_or_else(|| panic!("no file row:\n{}", rows.join("\n")));
+    assert!(row.contains("— small"), "{row}");
+}
+
+#[test]
+fn vim_mode_and_a_custom_palette_key_offer_the_same_rows() {
+    let (store, base) = global_only("p-palette-vim");
+    let db = database(&base, "one", "");
+    write_config(
+        &store.global,
+        r#"{"keyboardMode":"vim","keymap":{"vim":{"openPalette":["alt+p"]}}}"#,
+        &[sqlite_entry("g1", "one", &db.display().to_string())],
+    );
+    let mut session = Session::start(&store);
+    session.press(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT));
+    session.write("pool limit");
+    session.assert_sees("Connection: Pool limit = 5 — one");
+    session.code(KeyCode::Enter);
+    assert_eq!(session.app.form().map(|form| form.focus), Some(Field::Pool));
+}

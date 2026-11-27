@@ -13,7 +13,7 @@ use crate::connection::{Definition, Source};
 use crate::connector::Failure;
 use crate::connector::duckdb::{DuckdbTarget, file_source as duckdb_source};
 use crate::connector::sqlite::{SqliteTarget, file_source as sqlite_source};
-use crate::connector::target::{OpenTarget, open_target};
+use crate::connector::target::{ConnectionOptions, OpenTarget, open_target};
 use crate::exec::{
     ExecEvent, ExecutionEnd, Manager, RunOptions, Settings, StatementStatus, StreamControl,
 };
@@ -39,6 +39,8 @@ pub struct Options {
     pub continue_on_error: bool,
     pub yes: bool,
     pub password_file: Option<PathBuf>,
+    /// The connection options of the flags. They need a target.
+    pub connection_options: ConnectionOptions,
 }
 
 #[derive(Debug)]
@@ -125,18 +127,36 @@ fn resolve(options: &Options) -> Result<(Definition, Option<config::Stored>), Er
         .target
         .as_deref()
         .ok_or_else(|| Error::usage("--execute needs a target or --connection <name>."))?;
-    let definition = match open_target(target).map_err(Error::usage)? {
-        OpenTarget::File(path) => Definition::sqlite(SqliteTarget {
-            source: sqlite_source(&path.to_string_lossy()),
-            ..SqliteTarget::new(path)
-        }),
-        OpenTarget::Duckdb(text) => Definition::duckdb(DuckdbTarget {
-            source: duckdb_source(&text),
-            allow_create: false,
-            read_only: false,
-        }),
-        OpenTarget::Network(target) => Definition::new(target.label(), Source::Network(*target)),
+    let flags = options.connection_options.clone();
+    let (mut definition, connection_options) = match open_target(target).map_err(Error::usage)? {
+        OpenTarget::File(path) => (
+            Definition::sqlite(SqliteTarget {
+                source: sqlite_source(&path.to_string_lossy()),
+                ..SqliteTarget::new(path)
+            }),
+            flags,
+        ),
+        OpenTarget::Duckdb(text) => (
+            Definition::duckdb(DuckdbTarget {
+                source: duckdb_source(&text),
+                allow_create: false,
+                read_only: false,
+            }),
+            flags,
+        ),
+        OpenTarget::Network { target, options } => (
+            Definition::new(target.label(), Source::Network(*target)),
+            flags.merge(options).map_err(Error::usage)?,
+        ),
     };
+    if connection_options.max_scan.is_some() {
+        return Err(Error::usage(
+            "Max scan has no effect with --execute, because a batch read reads all messages.",
+        ));
+    }
+    definition
+        .apply(&connection_options)
+        .map_err(Error::usage)?;
     Ok((definition, None))
 }
 
@@ -152,9 +172,7 @@ fn allow_create(definition: &mut Definition, yes: bool) -> Result<(), Error> {
     };
     if let Some(path) = missing {
         if definition.read_only {
-            return Err(Error::failed(
-                "The database file does not exist. A read-only connection cannot create it.",
-            ));
+            return Err(Error::failed(crate::ui::text::READ_ONLY_NO_FILE));
         }
         if !yes {
             auth::confirm(
@@ -246,6 +264,9 @@ pub fn run(options: Options) -> Result<(), Error> {
     }
     allow_create(&mut definition, options.yes)?;
     auth::authenticate(&mut definition, stored.as_ref(), &options)?;
+    if stored.is_none() {
+        auth::ask_registry_password(&mut definition)?;
+    }
 
     let signals = Signals::new()?;
     let budget = Arc::new(Budget::new(Settings::default().budget_bytes));

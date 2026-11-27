@@ -99,6 +99,14 @@ fn moved<T: PartialEq>(stamps: &mut Vec<(Scope, T)>, scope: Scope, stamp: T) -> 
 
 /// Reads the custom themes of both scopes. A project id wins over a global id
 /// with the same name, and a file that cannot load gives a note.
+/// The settings dialog with the hashes of the files that it read.
+pub(super) struct LoadedSettings {
+    pub(super) form: SettingsForm,
+    pub(super) hashes: Vec<(Scope, Option<u64>)>,
+    /// The first note of the custom themes.
+    pub(super) note: Option<String>,
+}
+
 pub(super) fn load_themes(store: &Store) -> (ThemeCatalog, Vec<String>) {
     let mut catalog = ThemeCatalog::default();
     let mut notes = Vec::new();
@@ -558,46 +566,53 @@ impl App {
 
     /// Opens the dialog with the values of the files. It needs a valid configuration.
     pub(super) fn open_settings(&mut self) {
+        match self.load_settings() {
+            Ok(loaded) => {
+                self.modals.settings_hashes = loaded.hashes;
+                if let Some(note) = loaded.note {
+                    self.status = Some(note);
+                }
+                self.modals.settings_form = Some(loaded.form);
+            }
+            Err(message) => self.status = Some(message),
+        }
+    }
+
+    /// Reads the values of the files into the dialog. It needs a valid configuration.
+    pub(super) fn load_settings(&self) -> Result<LoadedSettings, String> {
         let Some(persist) = &self.persist else {
-            self.status = Some(text::NO_STORE.to_owned());
-            return;
+            return Err(text::NO_STORE.to_owned());
         };
         if persist.error.is_some() {
-            self.status = Some(text::CONFIG_BLOCKED.to_owned());
-            return;
+            return Err(text::CONFIG_BLOCKED.to_owned());
         }
-        let global = config::preferences_and_hash(&persist.store.global, Scope::Global);
+        let (global, global_hash) =
+            config::preferences_and_hash(&persist.store.global, Scope::Global)?;
         let project = persist
             .store
             .project
             .as_ref()
-            .map(|root| config::preferences_and_hash(root, Scope::Project));
-        let project = project.transpose();
-        match (global, project) {
-            (Ok((global, global_hash)), Ok(project)) => {
-                let mut hashes = vec![(Scope::Global, global_hash)];
-                let project = project.map(|(project, hash)| {
-                    hashes.push((Scope::Project, hash));
-                    project
-                });
-                self.modals.settings_hashes = hashes;
-                let (custom, notes) = load_themes(&persist.store);
-                if let Some(note) = notes.first() {
-                    self.status = Some(note.clone());
-                }
-                let used = self
-                    .connections
-                    .iter()
-                    .filter_map(|connection| {
-                        let theme = connection.definition.as_ref()?.theme.clone()?;
-                        theme.custom_id().map(str::to_owned)
-                    })
-                    .collect();
-                self.modals.settings_form =
-                    Some(SettingsForm::with_themes(global, project, custom, used))
-            }
-            (Err(message), _) | (_, Err(message)) => self.status = Some(message),
-        }
+            .map(|root| config::preferences_and_hash(root, Scope::Project))
+            .transpose()?;
+        let mut hashes = vec![(Scope::Global, global_hash)];
+        let project = project.map(|(project, hash)| {
+            hashes.push((Scope::Project, hash));
+            project
+        });
+        let (custom, notes) = load_themes(&persist.store);
+        let used = self
+            .connections
+            .iter()
+            .filter_map(|connection| {
+                let theme = connection.definition.as_ref()?.theme.clone()?;
+                theme.custom_id().map(str::to_owned)
+            })
+            .collect();
+        Ok(LoadedSettings {
+            form: SettingsForm::with_themes(global, project, custom, used),
+            hashes,
+            note: notes.into_iter().next(),
+        })
     }
 
     /// Keeps the choices of the export dialog. A write that fails leaves a note, and

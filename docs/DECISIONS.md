@@ -31,6 +31,8 @@ In the order of the original record. Undated entries are the early records or ca
 
 | Date | Decision | Area |
 |---|---|---|
+| 2026-11-27 | [Connection options on the command line](decisions/execution.md#connection-options-on-the-command-line--2026-11-27) | Execution |
+| 2026-11-27 | [Settings in the palette](decisions/interface.md#settings-in-the-palette--2026-11-27) | Interface |
 | 2026-11-27 | [Help pages in the palette](decisions/interface.md#help-pages-in-the-palette--2026-11-27) | Interface |
 | 2026-11-27 | [Configuration hints](decisions/connectors.md#configuration-hints--2026-11-27) | Connectors and sessions |
 | 2026-11-20 | [MCP context, Kafka bounds, and IPC 3](decisions/ai-mcp-agent.md#mcp-context-kafka-bounds-and-ipc-3--2026-11-20) | AI, MCP, and agent |

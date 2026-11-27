@@ -960,7 +960,7 @@ fn network_connectors_apply_and_clean_the_agent_read_only_context() {
             eprintln!("SKIP {variable}: database integration environment is absent");
             continue;
         };
-        let sqln::connector::target::OpenTarget::Network(target) =
+        let sqln::connector::target::OpenTarget::Network { target, .. } =
             sqln::connector::target::open_target(&url).unwrap()
         else {
             panic!("network target expected")
@@ -1709,7 +1709,7 @@ fn network_full_access_writes_and_never_leaves_a_transaction() {
             eprintln!("SKIP {variable}: database integration environment is absent");
             continue;
         };
-        let sqln::connector::target::OpenTarget::Network(target) =
+        let sqln::connector::target::OpenTarget::Network { target, .. } =
             sqln::connector::target::open_target(&url).unwrap()
         else {
             panic!("network target expected")

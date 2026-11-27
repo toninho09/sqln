@@ -6,14 +6,18 @@ use super::{App, Screen};
 use crate::connector::{Namespace, TransactionState};
 use crate::console::Focus;
 use crate::exec::ConnectionId;
+use crate::form::{ConnectionForm, Field, FieldStyle, FormNote};
 use crate::grid::printable;
 use crate::input::{Action, Region};
 use crate::navigator::RowKind;
 use crate::palette::{Command, Palette, PaletteRequest, Target};
 use crate::plan::Explain;
+use crate::settings::{self, SECTIONS};
 use crate::structure::{has_locks, has_sessions};
 use crate::table::TableFocus;
+use crate::ui::form as form_ui;
 use crate::ui::kit::measure::fit;
+use crate::ui::settings as settings_ui;
 use crate::ui::text;
 use crate::ui::welcome::Welcome;
 use crate::ui::which_key::KeyGroup;
@@ -25,6 +29,10 @@ type MenuGroup = (&'static str, &'static [MenuRow]);
 
 /// The longest name of a row in the title of the explorer page.
 const EXPLORER_TITLE_NAME: usize = 48;
+/// The longest value of a field in a palette row, so the place stays visible.
+const PALETTE_VALUE: usize = 20;
+/// The longest connection name in a palette row.
+const PALETTE_CONNECTION: usize = 24;
 
 impl App {
     /// Returns the key to show for an action. `Ctrl+Enter` and `Shift+Enter` depend on
@@ -427,6 +435,8 @@ impl App {
                 Command::action(action, label, key)
             })
             .collect();
+        commands.extend(self.connection_field_commands());
+        commands.extend(self.setting_commands());
         // Each help page is a row after the actions. The filter reads its full text.
         if self.command_available(Action::Help) {
             let help = self.help();
@@ -443,6 +453,83 @@ impl App {
             );
         }
         self.modals.palette = Some(Palette::new(commands));
+    }
+
+    /// Returns a row for each field of the form of the current connection, with its
+    /// value. A connection without a saved definition has no rows.
+    fn connection_field_commands(&self) -> Vec<Command> {
+        let Some(id) = self.sessions_connection() else {
+            return Vec::new();
+        };
+        let Some(connection) = self.connection(id) else {
+            return Vec::new();
+        };
+        let Some(definition) = &connection.definition else {
+            return Vec::new();
+        };
+        // The full form lists each field, also the fields that a connected form hides.
+        let mut form = ConnectionForm::editing(id, definition, false);
+        form.themes = self.appearance.custom_themes.clone();
+        form.credential = connection.credential;
+        let name = fit(&printable(&connection.name), PALETTE_CONNECTION).0;
+        form.fields()
+            .into_iter()
+            .filter(|field| field.style() != FieldStyle::Button)
+            .map(|field| {
+                let value = form_ui::field_value(&form, field);
+                let value = value.map(|value| fit(&value, PALETTE_VALUE).0);
+                Command {
+                    target: Target::ConnectionField(id, field),
+                    label: text::connection_field_command(
+                        form_ui::field_label(&form, field),
+                        value.as_deref(),
+                        &name,
+                    ),
+                    key: None,
+                    words: form_ui::field_section(field).to_owned(),
+                }
+            })
+            .collect()
+    }
+
+    /// Returns a row for each field of the settings dialog, with its value. A
+    /// configuration that the dialog cannot open gives no rows.
+    fn setting_commands(&self) -> Vec<Command> {
+        let Ok(loaded) = self.load_settings() else {
+            return Vec::new();
+        };
+        settings::value_fields()
+            .map(|(section, field)| {
+                let value = settings_ui::value_text(&loaded.form, field);
+                let value = value.map(|value| fit(&value, PALETTE_VALUE).0);
+                Command {
+                    target: Target::Setting(field),
+                    label: text::setting_command(
+                        settings_ui::label(field),
+                        value.as_deref(),
+                        SECTIONS[section].title,
+                    ),
+                    key: None,
+                    words: String::new(),
+                }
+            })
+            .collect()
+    }
+
+    /// Opens the connection form with the focus on a field. A connected form hides some
+    /// fields: then the focus goes to `Disconnect`, with a note.
+    fn open_connection_field(&mut self, id: ConnectionId, field: Field) {
+        self.edit_connection(id);
+        let Some(form) = &mut self.modals.form else {
+            return;
+        };
+        if form.fields().contains(&field) {
+            form.focus_on(field);
+        } else if form.display_only {
+            let label = form_ui::field_label(form, field);
+            form.note = Some(FormNote::Info(text::disconnect_to_change(label)));
+            form.focus_on(Field::Disconnect);
+        }
     }
 
     pub(super) fn on_palette_key(&mut self, key: KeyEvent) {
@@ -468,6 +555,17 @@ impl App {
                 let mut help = self.help();
                 help.open_page(page);
                 self.modals.help = Some(help);
+            }
+            PaletteRequest::ConnectionField(id, field) => {
+                self.modals.palette = None;
+                self.open_connection_field(id, field);
+            }
+            PaletteRequest::Setting(field) => {
+                self.modals.palette = None;
+                self.open_settings();
+                if let Some(form) = &mut self.modals.settings_form {
+                    form.open_field(field);
+                }
             }
         }
     }

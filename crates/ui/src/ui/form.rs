@@ -144,6 +144,43 @@ fn choice(form: &ConnectionForm, field: Field) -> &'static str {
     }
 }
 
+/// Returns the text of a choice. A custom theme has its own name.
+fn choice_text(form: &ConnectionForm, field: Field) -> String {
+    if field == Field::Theme {
+        form.theme.as_ref().map_or_else(
+            || text::VALUE_DEFAULT.to_owned(),
+            |name| text::theme_label(name, &form.themes),
+        )
+    } else {
+        choice(form, field).to_owned()
+    }
+}
+
+/// Returns the label of a field, as the form shows it.
+pub fn field_label(form: &ConnectionForm, field: Field) -> &'static str {
+    label(form.kind, field)
+}
+
+/// Returns the title of the section that holds a field.
+pub fn field_section(field: Field) -> &'static str {
+    section_title(field.group())
+}
+
+/// Returns the value of a field on one line, as the form shows it. A secret field and
+/// an empty field give `None`.
+pub fn field_value(form: &ConnectionForm, field: Field) -> Option<String> {
+    let value = match field.style() {
+        FieldStyle::Secret | FieldStyle::Button => return None,
+        FieldStyle::Choice => choice_text(form, field),
+        FieldStyle::Flag => text::on_off(form.flag(field)).to_owned(),
+        FieldStyle::Text if field == Field::Uri => {
+            hide_uri_password(&printable(form.text(field)), MASK)
+        }
+        FieldStyle::Text => printable(form.text(field)),
+    };
+    Some(value).filter(|value| !value.is_empty())
+}
+
 /// Writes a text value, and it keeps the cursor inside the width.
 fn text_line(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) -> Line<'static> {
     let text = match field {
@@ -179,14 +216,7 @@ fn value_line(form: &ConnectionForm, field: Field, width: usize, theme: &Theme) 
                 .icon
                 .filter(|_| field == Field::Icon)
                 .map_or(String::new(), |icon| Theme::icon(connection_symbol(icon)));
-            let value = if field == Field::Theme {
-                form.theme.as_ref().map_or_else(
-                    || text::VALUE_DEFAULT.to_owned(),
-                    |name| text::theme_label(name, &form.themes),
-                )
-            } else {
-                choice(form, field).to_owned()
-            };
+            let value = choice_text(form, field);
             Line::from(Span::styled(
                 choice_value(&format!("{symbol}{value}")),
                 style,

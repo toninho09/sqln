@@ -166,6 +166,33 @@ pub const SECTIONS: [Section; 7] = [
     },
 ];
 
+/// Lists the fields that hold a value, with the index of their section. The buttons and
+/// the lists of the themes and of the shortcuts are not in the list.
+pub fn value_fields() -> impl Iterator<Item = (usize, Field)> {
+    SECTIONS.iter().enumerate().flat_map(|(section, item)| {
+        item.fields
+            .iter()
+            .filter(|field| {
+                !matches!(
+                    field,
+                    Field::Themes
+                        | Field::ThemeNew
+                        | Field::ThemeEdit
+                        | Field::ThemeDelete
+                        | Field::AiTest
+                        | Field::ShortcutCommands
+                        | Field::ShortcutBinding
+                        | Field::ShortcutFinish
+                        | Field::ShortcutRecord
+                        | Field::ShortcutRemove
+                        | Field::ShortcutRestore
+                        | Field::ShortcutBack
+                )
+            })
+            .map(move |field| (section, *field))
+    })
+}
+
 pub enum SettingsRequest {
     AiTest,
     None,
@@ -883,6 +910,17 @@ impl SettingsForm {
             || matches!(field, Field::ShortcutOk | Field::ShortcutCancel)
         {
             self.focus = field;
+        }
+    }
+
+    /// Opens the section of a field and puts the focus on the field. The palette uses this.
+    pub fn open_field(&mut self, field: Field) {
+        if let Some(section) = SECTIONS
+            .iter()
+            .position(|section| section.fields.contains(&field))
+        {
+            self.open_section(section);
+            self.focus_on(field);
         }
     }
 

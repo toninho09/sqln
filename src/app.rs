@@ -120,6 +120,8 @@ pub struct Options {
     pub dialect: Dialect,
     pub catalog: Option<Catalog>,
     pub database: Option<PathBuf>,
+    /// The connection options of the command line for `database`.
+    pub target_options: crate::connector::target::ConnectionOptions,
     /// The connections of the command line. The first console uses the first one.
     pub connections: Vec<Definition>,
     /// True when the command line names the database. The tabs of the last session
@@ -169,6 +171,7 @@ impl Default for Options {
             dialect: Dialect::Postgres,
             catalog: None,
             database: None,
+            target_options: Default::default(),
             connections: Vec::new(),
             session_target: false,
             start_home: false,
@@ -442,6 +445,8 @@ pub struct App {
     explorer_side: ExplorerSide,
     show_system_commands: bool,
     database: Option<PathBuf>,
+    /// The connection options of the command line for `database`.
+    target_options: crate::connector::target::ConnectionOptions,
     clipboard: SharedClipboard,
     /// The theme of the current frame. `choose_theme` writes it at the start of each
     /// frame, so a change of tab or of a choice needs no other step.
@@ -632,6 +637,7 @@ impl App {
             },
             show_system_commands: options.show_system_commands,
             database: options.database,
+            target_options: options.target_options,
             clipboard,
             theme,
             layout: ScreenLayout::default(),
@@ -780,6 +786,10 @@ impl App {
 
     pub fn form(&self) -> Option<&ConnectionForm> {
         self.modals.form.as_ref()
+    }
+
+    pub fn settings_form(&self) -> Option<&crate::settings::SettingsForm> {
+        self.modals.settings_form.as_ref()
     }
 
     fn console_index(&self, id: ConsoleId) -> Option<usize> {

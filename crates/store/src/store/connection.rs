@@ -7,7 +7,9 @@ use super::Scope;
 use super::config::DEFAULT_CAP_IN_SQL;
 use crate::connector::duckdb::{DuckdbSource, DuckdbTarget};
 use crate::connector::sqlite::SqliteTarget;
-use crate::connector::target::{Address, NetworkTarget, Tls};
+use crate::connector::target::{
+    Address, ConnectionOptions, Engine, NetworkTarget, OptionName, Tls,
+};
 use crate::grid::DEFAULT_LIMIT;
 
 pub const DEFAULT_POOL_LIMIT: usize = 5;
@@ -162,6 +164,86 @@ impl Definition {
             idle_timeout: if memory { None } else { self.idle_timeout },
             ..base.clone()
         }
+    }
+
+    /// Writes the connection options of the command line. An option that does not
+    /// apply to the source is refused with the reason.
+    pub fn apply(&mut self, options: &ConnectionOptions) -> Result<(), String> {
+        let kafka =
+            matches!(&self.source, Source::Network(target) if target.engine == Engine::Kafka);
+        let rules = [
+            (
+                OptionName::ForeignKeys,
+                matches!(self.source, Source::Sqlite(_)),
+                "SQLite",
+            ),
+            (
+                OptionName::BusyTimeout,
+                matches!(self.source, Source::Sqlite(_)),
+                "SQLite",
+            ),
+            (OptionName::RegistryUser, kafka, "Kafka"),
+            (OptionName::MaxScan, kafka, "Kafka"),
+            (
+                OptionName::ConnectTimeout,
+                matches!(self.source, Source::Network(_)),
+                "network connections",
+            ),
+        ];
+        if let Some((name, _, place)) = rules
+            .into_iter()
+            .find(|(name, valid, _)| !valid && options.has(*name))
+        {
+            return Err(format!("{} is valid only for {place}.", name.title()));
+        }
+        if kafka && options.read_only.is_some() {
+            return Err("Read only has no effect on Kafka. SQLN only reads from Kafka.".to_owned());
+        }
+        if let Some(read_only) = options.read_only {
+            self.read_only = read_only;
+            // DuckDB applies the mode only when the database opens.
+            if let Source::Duckdb(target) = &mut self.source {
+                target.read_only = read_only;
+            }
+        }
+        if let Some(production) = options.production {
+            self.production = production;
+        }
+        if let Some(pool) = options.pool {
+            self.max_connections = pool;
+        }
+        if let Some(time) = options.connect_timeout {
+            self.connect_timeout = time;
+        }
+        if let Some(time) = options.sql_timeout {
+            self.sql_timeout = time;
+        }
+        if let Some(time) = options.idle_timeout {
+            self.idle_timeout = time;
+        }
+        match &mut self.source {
+            Source::Sqlite(target) => {
+                if options.foreign_keys.is_some() {
+                    target.foreign_keys = options.foreign_keys;
+                }
+                if let Some(time) = options.busy_timeout {
+                    target.busy_timeout = time;
+                }
+            }
+            Source::Network(target) => {
+                if options.max_scan.is_some() {
+                    target.kafka.max_scan = options.max_scan;
+                }
+                if let Some(user) = &options.registry_user {
+                    let registry = target.kafka.registry.as_mut().ok_or(
+                        "Registry user needs a Schema Registry. Add registry=<url> to the URI.",
+                    )?;
+                    registry.user = user.clone();
+                }
+            }
+            Source::Duckdb(_) => {}
+        }
+        Ok(())
     }
 
     /// Returns this definition without the password of the session.

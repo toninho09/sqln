@@ -1,10 +1,14 @@
-//! The command palette: the actions of the application and the help pages, with a filter.
+//! The command palette: the actions of the application, the settings, and the help
+//! pages, with a filter.
 
 use crossterm::event::KeyEvent;
 
+use crate::exec::ConnectionId;
 use crate::filter_list::{FilterList, ListRequest};
+use crate::form;
 use crate::input::Action;
 use crate::line_input::LineInput;
+use crate::settings;
 use crate::ui::text;
 
 /// What a row of the palette opens.
@@ -13,6 +17,10 @@ pub enum Target {
     Action(Action),
     /// A page of the help, as an index of its sidebar.
     Help(usize),
+    /// A field of the connection form.
+    ConnectionField(ConnectionId, form::Field),
+    /// A field of the settings dialog.
+    Setting(settings::Field),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +41,10 @@ pub enum PaletteRequest {
     Run(Action),
     /// Opens the help on a page.
     Help(usize),
+    /// Opens the connection form with the focus on the field.
+    ConnectionField(ConnectionId, form::Field),
+    /// Opens the settings dialog with the focus on the field.
+    Setting(settings::Field),
 }
 
 #[derive(Clone, Debug)]
@@ -100,6 +112,8 @@ impl Palette {
             Some(command) => match command.target {
                 Target::Action(action) => PaletteRequest::Run(action),
                 Target::Help(page) => PaletteRequest::Help(page),
+                Target::ConnectionField(id, field) => PaletteRequest::ConnectionField(id, field),
+                Target::Setting(field) => PaletteRequest::Setting(field),
             },
             None => PaletteRequest::None,
         }
